@@ -102,6 +102,7 @@ class ExampleTransactionConformanceTest
           packageResolution: Map[PackageName, PackageId],
           expectFailure: Boolean,
           getEngineAbortStatus: GetEngineAbortStatus,
+          storedExternalCallResults: DAMLe.StoredExternalCallResults,
       )(implicit traceContext: TraceContext): EitherT[
         FutureUnlessShutdown,
         DAMLe.ReinterpretationError,
