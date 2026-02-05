@@ -25,6 +25,11 @@ import com.digitalasset.daml.lf.transaction.ContractStateMachine
   * @param contractStateMode
   *   Contract state machine is configured to use this mode for validating transactions. To modify
   *   the default value requires canton.parameters.non-standard-config = true
+  * @param extensions
+  *   Configuration for external extension services that can be called from Daml contracts.
+  *   Map from extension ID to extension service configuration.
+  * @param extensionSettings
+  *   Global settings for engine extensions
   */
 final case class CantonEngineConfig(
     enableEngineStackTraces: Boolean = false,
@@ -34,4 +39,6 @@ final case class CantonEngineConfig(
     validationPhaseLogging: EngineLoggingConfig = EngineLoggingConfig(enabled = false),
     enableAdditionalConsistencyChecks: Boolean = false,
     contractStateMode: Option[ContractStateMachine.Mode] = None,
+    extensions: Map[String, ExtensionServiceConfig] = Map.empty,
+    extensionSettings: EngineExtensionsConfig = EngineExtensionsConfig.default,
 )
