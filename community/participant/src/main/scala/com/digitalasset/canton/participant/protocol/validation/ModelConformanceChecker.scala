@@ -269,9 +269,17 @@ class ModelConformanceChecker(
 
     val contractAndKeyLookup = new ExtendedContractLookup(inputContracts, resolverFromView)
 
+    // Determine if this participant is a confirmer (signatory) for this view
+    // Confirmers must re-execute external calls; observers replay stored results
+    val confirmingParties = view.viewCommonData.tryUnwrap.viewConfirmationParameters.confirmers
+    val isConfirmerF: FutureUnlessShutdown[Boolean] =
+      topologySnapshot.canConfirm(participantId, confirmingParties).map(_.nonEmpty)
+
     for {
 
       packagePreference <- buildPackageNameMap(packageIdPreference, topologySnapshot, ledgerTime)
+
+      isConfirmer <- EitherT.right[Error](isConfirmerF)
 
       lfTxAndMetadata <- reinterpreter
         .reinterpret(
@@ -287,6 +295,7 @@ class ModelConformanceChecker(
           failed,
           getEngineAbortStatus,
           storedExternalCallResults,
+          isConfirmer,
         )(traceContext)
         .leftMap(DAMLeError(_, view.viewHash))
         .leftWiden[Error]
