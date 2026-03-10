@@ -258,12 +258,34 @@ class ModelConformanceChecker(
     val seed = viewParticipantData.actionDescription.seedOption
 
     // Extract stored external call results from the action description (if exercise)
-    val storedExternalCallResults: StoredExternalCallResults =
-      viewParticipantData.actionDescription match {
-        case exercise: ExerciseActionDescription =>
-          StoredExternalCallResults.fromResults(exercise.externalCallResults)
-        case _ => StoredExternalCallResults.empty
+    // IMPORTANT: Also aggregate results from ALL subviews because external calls may occur
+    // in nested exercises (child views) but need to be replayed when reinterpreting the parent view.
+    val storedExternalCallResults: StoredExternalCallResults = {
+      // Helper to extract results from a single view's action description
+      def extractFromView(v: TransactionView): StoredExternalCallResults = {
+        v.viewParticipantData.unwrap match {
+          case Right(vpd) =>
+            vpd.actionDescription match {
+              case exercise: ExerciseActionDescription =>
+                StoredExternalCallResults.fromResults(exercise.externalCallResults)
+              case _ =>
+                StoredExternalCallResults.empty
+            }
+          case Left(_) =>
+            // Blinded view - no data available
+            StoredExternalCallResults.empty
+        }
       }
+
+      // Collect results from this view AND all subviews (flatten includes this view as first element)
+      val allViewResults = view.flatten.map(extractFromView)
+      val allResults = allViewResults.foldLeft(StoredExternalCallResults.empty)(_ ++ _)
+
+      logger.info(
+        s"reInterpret: Aggregated ${allResults.size} external call results from ${view.flatten.size} views"
+      )
+      allResults
+    }
 
     val inputContracts = view.inputContracts.fmap(_.contract)
 

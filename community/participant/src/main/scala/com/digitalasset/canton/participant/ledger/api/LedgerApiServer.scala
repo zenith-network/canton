@@ -138,6 +138,7 @@ class LedgerApiServer(
     ledgerApiIndexer: Eval[LedgerApiIndexer],
     pruningConfig: ParticipantStoreConfig,
     val loggerFactory: NamedLoggerFactory,
+    extensionServiceManagerOpt: Option[ExtensionServiceManager] = None,
 )(implicit
     executionContext: ExecutionContextIdlenessExecutorService,
     actorSystem: ActorSystem,
@@ -209,22 +210,7 @@ class LedgerApiServer(
     val inMemoryState = ledgerApiIndexer.value.inMemoryState
     val timedSyncService = new TimedSyncService(syncService, grpcApiMetrics)
 
-    // Create extension service manager and handler for external calls
-    val extensionServiceManagerOpt: Option[ExtensionServiceManager] =
-      if (cantonParameterConfig.engine.extensions.nonEmpty) {
-        val manager = new ExtensionServiceManager(
-          extensionConfigs = cantonParameterConfig.engine.extensions,
-          engineExtensionsConfig = cantonParameterConfig.engine.extensionSettings,
-          loggerFactory = loggerFactory,
-        )
-        logger.info(
-          s"Extension service manager initialized with ${cantonParameterConfig.engine.extensions.size} extension(s): " +
-            s"${cantonParameterConfig.engine.extensions.keys.mkString(", ")}"
-        )
-        Some(manager)
-      } else {
-        None
-      }
+    // Create external call handler from the extension service manager (passed from ParticipantNode)
     val externalCallHandler: ExternalCallHandler =
       ExtensionServiceExternalCallHandler.create(extensionServiceManagerOpt)
 
@@ -609,6 +595,7 @@ object LedgerApiServer {
       sync: CantonSyncService,
       pruningConfig: ParticipantStoreConfig,
       tracerProvider: TracerProvider,
+      extensionServiceManagerOpt: Option[ExtensionServiceManager] = None,
   )(implicit
       actorSystem: ActorSystem,
       executionContext: ExecutionContextIdlenessExecutorService,
@@ -665,6 +652,7 @@ object LedgerApiServer {
       ledgerApiIndexer = ledgerApiIndexer,
       loggerFactory = loggerFactory,
       pruningConfig = pruningConfig,
+      extensionServiceManagerOpt = extensionServiceManagerOpt,
     ).owner()
     new ResourceOwnerFlagCloseableOps(ledgerApiServerOwner)
       .acquireFlagCloseable("Ledger API Server")

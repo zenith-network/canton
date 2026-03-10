@@ -33,7 +33,7 @@ import com.digitalasset.canton.protocol.hash.HashTracer
 import com.digitalasset.canton.util.collection.MapsUtil
 import com.digitalasset.canton.util.{EitherTUtil, MonadUtil}
 import com.digitalasset.canton.version.HashingSchemeVersion
-import com.digitalasset.daml.lf.transaction.{SubmittedTransaction, Transaction}
+import com.digitalasset.daml.lf.transaction.{SerializationVersion, SubmittedTransaction, Transaction}
 import com.digitalasset.daml.lf.value.Value.ContractId
 
 import java.util.UUID
@@ -247,15 +247,23 @@ class ExternalTransactionProcessor(
         ](encoder.encode(enriched))
         .mapK(FutureUnlessShutdown.outcomeK)
       // Compute the pre-computed hash for convenience
-      protocolVersion = commandExecutionResult.synchronizerRank.synchronizerId.protocolVersion
-      hash <- EitherT
-        .fromEither[FutureUnlessShutdown](
-          enriched
-            .computeHash(hashingSchemeVersion, protocolVersion, hashTracer)
-            .leftMap(error => InteractiveSubmissionPreparationError.Reject(error.message))
-        )
+      // Use V3 for VDev transactions (required for externalCall support)
+      hashVersionAndHash <- {
+        val protocolVersion = commandExecutionResult.synchronizerRank.synchronizerId.protocolVersion
+        // Use the transaction's serialization version to select hashing scheme
+        val txVersion = enriched.transaction.version
+        val hashVersion: HashingSchemeVersion = if (txVersion == SerializationVersion.VDev) HashingSchemeVersion.V3 else HashingSchemeVersion.V2
+        EitherT
+          .fromEither[FutureUnlessShutdown](
+            enriched
+              .computeHash(hashVersion, protocolVersion, hashTracer)
+              .leftMap(error => InteractiveSubmissionPreparationError.Reject(error.message))
+          )
+          .map(hash => (hashVersion, hash): (HashingSchemeVersion, Hash))
+      }
     } yield {
-      PrepareResult(encoded, hash, hashingSchemeVersion)
+      val (hashVersion: HashingSchemeVersion, hash: Hash) = hashVersionAndHash
+      PrepareResult(encoded, hash, hashVersion)
     }
 
   /** Decodes a prepared transaction, verify its signature and convert it to CommandExecutionResult
