@@ -751,7 +751,8 @@ Echo-mode rule:
 
 - `EngineExtensionsConfig.echoMode` remains in the final design as a test-only bypass
 - when `echoMode = true`, `ExtensionServiceManager` instantiates `EchoExtensionServiceClient` for every configured extension and does not construct HTTP clients, auth providers, token managers, or remote-validation probes for those extensions
-- in echo mode, `validateAllExtensions()` still returns one `ExtensionValidationReport` per configured extension, but each report is empty-success: `localErrors = Seq.empty`, `remoteErrors = Seq.empty`, `remoteWarnings = Seq.empty`
+- when `echoMode = true` and `validation-mode != off`, `validateAllExtensions()` returns one `ExtensionValidationReport` per configured extension, but each report is empty-success: `localErrors = Seq.empty`, `remoteErrors = Seq.empty`, `remoteWarnings = Seq.empty`
+- when `echoMode = true` and `validation-mode = off`, `validateAllExtensions()` returns no startup-validation report
 - therefore startup succeeds in every `validation-mode` when `echoMode = true`
 - the OAuth behavior specified in this document applies only when `echoMode = false`
 
