@@ -102,10 +102,8 @@ This is required so development and test environments can remain unauthenticated
 
 Where external call auth configuration needs JWT- or OAuth-related concepts already used elsewhere in Canton, it should use existing Canton terminology and semantics rather than introducing synonyms:
 
-- `issuer`
 - `audience` / `targetAudience`
 - `scope` / `targetScope`
-- JWKS URL
 - token lifetime
 - timestamp leeway
 
@@ -190,11 +188,13 @@ The abstraction must not assume refresh-token support is always available. Reacq
 
 ### R12. Invalidation On Rejection
 
-If an external service rejects the current access token with an authentication failure, the cached token must be invalidated so that the next attempt fetches new credentials.
+If an external service rejects the current access token with an authentication failure, the cached token must be invalidated so that the same call attempt or the next attempt fetches new credentials.
 
 This requirement is directly aligned with the invalidation behavior in the existing sequencer client authentication stack.
 
 The implementation must define a precise HTTP invalidation policy rather than relying on a generic notion of rejection. Invalidation must be driven by explicit auth-failure signals, such as a provider-compatible `401 Unauthorized` and related authentication challenge semantics, and must not be triggered by ordinary transport failures or application-level errors.
+
+If the invalidation happens after a request has already been sent, the invalidation rule must be token-conditional so that a stale rejection does not evict a newer token obtained concurrently.
 
 ### R13. Shared Concurrent Acquisition
 
@@ -211,6 +211,8 @@ The implementation must support rotation of:
 - authorization-server keys relevant to any local verification or discovery logic
 
 Where local verification or trust material lookup is needed, existing JWKS and certificate-loading patterns must be reused.
+
+This requirement does not imply that every material type must hot-reload in-process. Participant-restart pickup is acceptable for TLS trust-material rotation as long as the runtime behavior is documented explicitly.
 
 ## Configuration Requirements
 
@@ -231,24 +233,24 @@ External service transport security and OAuth client authentication must align w
 This applies both to:
 
 - the resource server connection used for the external call itself
-- any token endpoint or discovery endpoint connection needed for OAuth
+- the token endpoint connection used for OAuth
 
 ### R17. Secret Material Must Use Existing Confidential Config Handling
 
-Any secret-bearing configuration that remains necessary must use existing confidential-config handling patterns and must be clearly separated from non-secret metadata such as issuer, audience, and scope.
+Any secret-bearing configuration that remains necessary must use existing confidential-config handling patterns and must be clearly separated from non-secret metadata such as audience and scope.
 
 ### R18. Avoid Duplicating Identity Provider Semantics
 
-If external call auth needs issuer, audience, or JWKS-related metadata, the semantics must match the identity-provider and auth-service patterns already present in the codebase.
+Audience and scope semantics in outbound OAuth must match the identity-provider and auth-service patterns already present in the codebase.
 
-However, the implementation must not force-fit outbound OAuth into the inbound identity-provider store if that creates a misleading abstraction. Reuse of semantics is required; reuse of the exact storage model or verifier pipeline is optional.
+The implementation must not force-fit outbound OAuth into the inbound identity-provider store. Reuse of semantics is required; reuse of the exact storage model or verifier pipeline is not part of the final design.
 
 ### R19. Validation Of Misconfiguration
 
 Startup and config validation must reject clearly invalid combinations such as:
 
 - static token config combined with OAuth config
-- OAuth config missing required issuer or token endpoint information
+- OAuth config missing required token endpoint or client-assertion information
 - audience and scope combinations that cannot be satisfied
 - private key or certificate references that cannot be loaded
 
@@ -284,7 +286,7 @@ Validation should cover, as applicable:
 
 - auth configuration completeness
 - ability to load required keys or certificates
-- reachability of the token issuer or token endpoint when validation is enabled
+- reachability of the token endpoint when validation is enabled
 - acquisition of a token when safe and appropriate
 - reachability of the extension service under the configured auth mode
 
@@ -313,9 +315,9 @@ OAuth integration must not collapse all of these into the same generic external 
 
 ### R24. TLS By Default
 
-OAuth-enabled external calls must use TLS by default for both the token endpoint and the resource server.
+OAuth-enabled external calls must use TLS for both the token endpoint and the resource server in the supported production contract.
 
-Any insecure option must remain clearly marked as development-only, consistent with existing `tlsInsecure` behavior.
+Plaintext transport must be rejected for OAuth mode. Any retained insecure or trust-all hook must remain clearly marked as development-only implementation scaffolding and must not be part of the supported production config contract.
 
 ### R25. Least-Privilege Tokens
 
@@ -336,7 +338,6 @@ The implementation must not log:
 Logs may include safe metadata such as:
 
 - extension identifier
-- token issuer
 - audience
 - scope
 - request identifiers
@@ -425,15 +426,6 @@ Existing installations must not silently switch auth behavior based on partial c
 
 If OAuth is enabled, it must be because the configuration explicitly selected it.
 
-## Open Design Constraints
-
-The implementation should resolve the following without violating the reuse-first principles above:
-
-1. Whether outbound OAuth config should reference an existing identity-provider definition, or only reuse its semantics.
-2. Which key formats and algorithms should be supported for JWT-assertion-based client authentication.
-3. Whether token-endpoint retry and external-call retry can share common retry primitives without coupling their responsibilities.
-4. How far auth-aware startup validation should go without making startup depend on a business endpoint.
-
 ## Acceptance Criteria
 
 The requirements in this document are satisfied when all of the following are true:
@@ -441,7 +433,7 @@ The requirements in this document are satisfied when all of the following are tr
 - authenticated external calls no longer depend on a statically configured bearer token
 - the new auth flow uses OAuth-compatible service authentication
 - token lifecycle management follows the same operational model already used elsewhere in the codebase
-- JWT, audience, scope, issuer, TLS, and key-handling semantics align with existing Canton patterns
+- JWT, audience, scope, TLS, and key-handling semantics align with existing Canton patterns
 - the documented production path is OAuth with JWT-assertion-based client authentication over TLS
 - the implementation introduces no extension-specific auth model unless required by an external protocol constraint
 - the resulting design is documented and testable without special-case operational knowledge
