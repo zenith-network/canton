@@ -743,9 +743,9 @@ For OAuth-enabled extensions, validation remains globally controlled through `En
 Wiring rule:
 
 - `ParticipantNode` creates `ExtensionServiceManager`
-- before the participant exposes services, `ParticipantNode` invokes `validateAllExtensions()`
+- before the participant exposes services or threads `ExtensionServiceManager` into the external-call path, `ParticipantNode` awaits `validateAllExtensions()`
 - `ExtensionServiceManager` executes the checks implied by `validation-mode`
-- startup failure is derived solely from `validation-mode`, not from a second fail/ignore boolean
+- `ParticipantNode` derives startup success or failure from the aggregated validation report plus `validation-mode`, not from a second fail/ignore boolean
 
 Echo-mode rule:
 
@@ -784,7 +784,8 @@ API rule:
 
 - `ExtensionServiceClient.validateConfiguration(validationMode)` returns `ExtensionValidationReport`
 - `ExtensionServiceManager.validateAllExtensions()` returns `Map[String, ExtensionValidationReport]`
-- startup success/failure is computed by `ExtensionServiceManager` from those reports and the global `validation-mode`
+- `ExtensionServiceManager` does not throw or fail startup on validation findings; it only returns the aggregated report
+- `ParticipantNode` is responsible for interpreting that aggregated report against the global `validation-mode` and deciding whether startup continues
 - the validation report type does not itself encode startup success/failure
 
 Fatal local-validation rule:
