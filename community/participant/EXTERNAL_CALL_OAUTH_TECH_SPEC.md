@@ -169,6 +169,7 @@ Lifecycle ownership must also reuse the same control pattern:
 - `ExtensionServiceManager` becomes the owner of auth providers and passes a `Clock` plus `isClosing` signal into `OAuthAccessTokenManager`
 - `ExtensionServiceManager.onClosed()` must close auth providers so background refresh stops when the participant shuts down
 - `ParticipantNode` must pass its existing clock into the manager instead of leaving auth refresh on wall-clock calls hidden inside the HTTP client
+- `ParticipantNode` must register `extensionServiceManagerOpt.foreach(addCloseable)` or an equivalent lifecycle-managed close path so `ExtensionServiceManager.onClosed()` is guaranteed to run during participant shutdown
 
 ### Foreground and background acquisition rules
 
@@ -810,6 +811,7 @@ Therefore:
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/ParticipantNode.scala`
   - pass `Clock` into `ExtensionServiceManager`
   - invoke startup validation before services are exposed
+  - register `ExtensionServiceManager` in the node closeable set
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/config/ExtensionServiceConfig.scala`
   - replace the legacy transport/auth fields with an explicit endpoint and auth config model
   - replace the current validation booleans with one global validation-mode enum
