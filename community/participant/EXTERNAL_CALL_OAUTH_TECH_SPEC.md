@@ -100,7 +100,7 @@ Runtime rules:
 - token-acquisition failures are classified from a compact auth failure model, not from a later flattened HTTP status code
 - if no positive deadline budget remains, neither token acquisition nor a resource request is started
 
-The outer retry loop remains owned by `HttpExtensionServiceClient`; the spec does not require a new auth-provider-driven async orchestration layer. If the implementation keeps the current blocking retry loop shape, token-endpoint work and the auth-local replay must still honor the same absolute operation deadline.
+The outer retry loop remains owned by `HttpExtensionServiceClient`; token-endpoint work and the auth-local replay must honor the same absolute operation deadline as the surrounding business call.
 
 ### OAuth Token Lifecycle
 
