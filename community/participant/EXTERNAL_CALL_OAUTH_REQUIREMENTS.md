@@ -58,7 +58,7 @@ The requirements below assume reuse of the following existing codebase patterns 
 - `AuthServiceJWT` and `AuthServiceJWTPayload` for canonical JWT claim handling and audience/scope semantics.
 - `CachedJwtVerifierLoader` for JWKS retrieval and caching when verifier loading is needed.
 - declarative identity-provider configuration semantics already used by the ledger API: issuer, JWKS URL, and audience.
-- `AuthenticationTokenManagerConfig` and the lifecycle semantics embodied by `AuthenticationTokenProvider` and `AuthenticationTokenManager` for token acquisition, caching, pre-expiry refresh, retry, backoff, and invalidation patterns.
+- `AuthenticationTokenManagerConfig` and the lifecycle semantics embodied by `AuthenticationTokenProvider` and `AuthenticationTokenManager` for token acquisition, caching, pre-expiry refresh, retry/backoff configuration shape, and invalidation patterns, while defining an OAuth-specific HTTP retryability matrix instead of reusing the gRPC exception policy.
 - existing TLS client/server config patterns for certificate handling and trust configuration.
 - existing JWT signing and key loading helpers such as `JwtSigner` and `KeyUtils`.
 - existing Canton crypto usage patterns for private-key-backed JWT assertions where required.
@@ -136,6 +136,7 @@ In practice:
 - token acquisition retries belong to the auth/token-manager layer
 - external call transport retries remain in the HTTP client layer
 - token rejection must invalidate cached auth state before the next retry attempt
+- OAuth token acquisition must use an explicit HTTP-specific retryability matrix; it must not inherit the gRPC exception retry policy from sequencer authentication implicitly
 - token acquisition and refresh must fit within the external call timeout model; they must not introduce an unbounded second budget that can silently overrun the call's configured deadlines
 - foreground connect time and request time must both be composed with the remaining outer external-call deadline; neither may overrun `max-total-timeout`
 - if a distinct auth sub-budget is introduced, it must be explicitly bounded and composed with the existing external call timeouts

@@ -153,6 +153,7 @@ Concrete supporting types:
 - `final case class TokenEndpointHttpFailure(statusCode: Int, message: String, requestId: String) extends ExternalCallAuthFailure`
 - `final case class TokenEndpointTimeout(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
 - `final case class TokenEndpointIoFailure(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
+- `final case class TokenEndpointTlsFailure(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
 - `final case class MalformedTokenResponse(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
 - `final case class LocalAuthMaterialFailure(message: String) extends ExternalCallAuthFailure {`
 - `  override val requestId: Option[String] = None`
@@ -267,6 +268,45 @@ Shared in-flight acquisition rule:
 - receives an absolute deadline from the outer external-call attempt for foreground acquisition
 - returns `OAuthAccessTokenWithExpiry`
 - never logs secret-bearing inputs or outputs
+
+### Token-endpoint retry policy
+
+`AuthenticationTokenManagerConfig` reuse is limited to lifecycle timing and retry settings:
+
+- refresh-before-expiry timing
+- retry count
+- minimum retry interval
+- optional exponential-backoff and jitter settings
+
+The HTTP retryability matrix for OAuth token acquisition is defined by this spec, not inherited from the gRPC-oriented `AuthenticationTokenProvider` exception policy.
+
+Retryable token-endpoint failures:
+
+- HTTP `408`
+- HTTP `429`
+- HTTP `500`, `502`, `503`, `504`
+- connect timeout before an HTTP response
+- request timeout before an HTTP response
+- transient connect or I/O failure before an HTTP response
+
+Fatal token-endpoint failures:
+
+- HTTP `400`, `401`, `403`, `404`
+- any other `4xx` not explicitly listed as retryable
+- TLS trust failure
+- TLS hostname-verification failure
+- certificate-validation failure
+- malformed token response
+- unsupported `token_type`
+- local client-assertion signing failure
+- local auth-material or key-loading failure
+
+Retry timing rule:
+
+- token-endpoint `429` honors `Retry-After` when present
+- `Retry-After` is capped by token-manager retry settings
+- during foreground acquisition, every retry delay and retry attempt must also fit within the caller's remaining outer deadline
+- during background refresh, the same retryability matrix applies, but retry timing is bounded only by token-manager retry settings and per-attempt HTTP timeouts
 
 Initial grant type:
 
@@ -401,7 +441,7 @@ Auth token lifecycle retries are configured separately under `auth.oauth.token-m
 This split is intentional:
 
 - extension-level retry knobs govern replay of business calls to the resource server
-- token-manager retry knobs govern acquisition and refresh of OAuth tokens
+- token-manager retry knobs govern acquisition and refresh of OAuth tokens according to the explicit token-endpoint retryability matrix in this spec
 - no existing transport knob is silently removed or folded into a default
 
 ### Auth modes
@@ -707,6 +747,7 @@ The flattening rule is:
   - `TokenEndpointHttpFailure(statusCode, message, requestId)` preserves `statusCode`
   - `TokenEndpointTimeout(message, requestId)`, including timeout while waiting on a shared in-flight acquisition future, maps to `408`
   - `TokenEndpointIoFailure(message, requestId)` maps to `503`
+  - `TokenEndpointTlsFailure(message, requestId)` maps to `503`
   - `LocalAuthMaterialFailure(message)` maps to `500`
   - `MalformedTokenResponse(message, requestId)` maps to `502`
   - prefix the message with `OAuth token acquisition failed:`
