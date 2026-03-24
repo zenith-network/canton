@@ -299,6 +299,12 @@ Auth-aware validation must not implicitly require successful contact with an aut
 - best-effort remote auth validation
 - fail-closed startup behavior when explicitly configured
 
+Failure rule:
+
+- in every mode except `off`, local validation failures are fatal to startup
+- local validation failures include malformed config, mutually inconsistent config, unreadable private keys, unreadable certificate or trust files, and invalid TLS material
+- only remote validation failures are tolerated in best-effort remote mode
+
 The default behavior should avoid making the participant startup path more brittle than the current extension validation model unless the operator explicitly opts into stricter startup enforcement.
 
 ### R23. Clear Failure Classification

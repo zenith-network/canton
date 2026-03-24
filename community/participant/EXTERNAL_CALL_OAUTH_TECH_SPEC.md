@@ -574,6 +574,12 @@ Wiring rule:
 - `ExtensionServiceManager` executes the checks implied by `validation-mode`
 - startup failure is derived solely from `validation-mode`, not from a second fail/ignore boolean
 
+Fatal local-validation rule:
+
+- in every mode except `off`, local validation failures are fatal to startup
+- local validation failures include malformed config, mutually inconsistent config, unreadable private keys, unreadable certificate or trust files, and invalid TLS material
+- best-effort remote mode is lenient only about remote failures; it is not lenient about local misconfiguration
+
 Global validation modes:
 
 - `off`
@@ -584,14 +590,17 @@ Global validation modes:
   - load private keys and TLS trust material
   - build TLS contexts
   - do not hit remote endpoints
+  - fail startup on any local validation error
 - `best-effort-remote`
   - do local validation
   - perform token acquisition
   - attempt a transport-only resource-server reachability probe
-  - report failures but do not fail startup
+  - fail startup on any local validation error
+  - report remote validation failures but do not fail startup on them
 - `strict-remote`
   - same checks as `best-effort-remote`
-  - startup fails if remote auth validation fails
+  - fail startup on any local validation error
+  - fail startup if remote auth validation fails
 
 Remote validation must not send a synthetic business request through `/api/v1/external-call`.
 
