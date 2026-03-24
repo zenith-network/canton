@@ -129,9 +129,8 @@ Concrete auth-provider contract:
 - `  deadline: CantonTimestamp`
 - `)(implicit tc: TraceContext): FutureUnlessShutdown[Either[AuthPreparationFailure, PreparedAuth]]`
 - `handleResponse(`
-- `  statusCode: Int,`
+- `  responseContext: AuthResponseContext,`
 - `  preparedAuth: PreparedAuth,`
-- `  resourceRequestId: String,`
 - `  deadline: CantonTimestamp`
 - `)(implicit tc: TraceContext): FutureUnlessShutdown[AuthResponseDecision]`
 
@@ -141,6 +140,11 @@ Concrete supporting types:
 - `  authorizationHeader: Option[String],`
 - `  tokenUsed: Option[String],`
 - `  tokenEndpointRequestId: Option[String],`
+- `)`
+- `final case class AuthResponseContext(`
+- `  statusCode: Int,`
+- `  resourceRequestId: String,`
+- `  wwwAuthenticate: Option[String],`
 - `)`
 - `sealed trait AuthResponseDecision`
 - `case object NoReplay extends AuthResponseDecision`
@@ -153,6 +157,9 @@ Contract rules:
 - `prepareRequest` receives the absolute outer deadline and is responsible for clamping token-endpoint work to that deadline
 - `PreparedAuth.tokenUsed` is the exact token attached to the outgoing resource request and is the value used for token-conditional invalidation
 - `PreparedAuth.tokenEndpointRequestId` records the last token-endpoint HTTP request id involved in preparing that auth state for the current outer attempt
+- `AuthResponseContext` carries the subset of resource-response metadata the auth layer is allowed to inspect
+- `HttpExtensionServiceClient` constructs `AuthResponseContext` from the concrete resource-server `HttpResponse` before releasing that response object
+- `AuthResponseContext.wwwAuthenticate` is populated from the first `WWW-Authenticate` response header when present
 - `handleResponse` is pure from the perspective of business retry ownership: it may request one auth-local replay, but it does not advance the outer retry counter
 - `handleResponse` may return `ReplayOnceWithFreshAuth` at most once per outer attempt
 
@@ -523,7 +530,7 @@ For one outer external-call attempt:
 3. `prepareRequest` returns `PreparedAuth`.
 4. `HttpExtensionServiceClient` sends the request to `/api/v1/external-call` with the existing business headers unchanged, the auth header from `PreparedAuth`, and the per-attempt timeout clamped to the remaining outer budget.
 5. If the response is not `401`, that response is the outcome of the outer attempt.
-6. If the response is `401`, `HttpExtensionServiceClient` calls `ExternalCallAuthProvider.handleResponse(statusCode, preparedAuth, resourceRequestId, deadline)`.
+6. If the response is `401`, `HttpExtensionServiceClient` extracts `statusCode`, `requestId`, and the first `WWW-Authenticate` header from the concrete `HttpResponse`, builds `AuthResponseContext`, and calls `ExternalCallAuthProvider.handleResponse(responseContext, preparedAuth, deadline)`.
 7. `handleResponse` may perform one auth-local replay inside the same outer attempt by returning `ReplayOnceWithFreshAuth(nextPreparedAuth)`.
 8. The final response produced by that auth-local replay, or the original non-`401` response, becomes the outcome of the outer attempt.
 9. The outer retry loop then classifies that outer-attempt outcome as success, retryable failure, or terminal failure.
@@ -536,7 +543,7 @@ The invalidation policy is:
 - replay the same business request once with a freshly acquired token, subject to the existing outer timeout budget
 - the `401` replay is an auth-local replay inside one business-request attempt; it does not consume one of the configured outer `maxRetries` slots
 - do not invalidate on `403`, `404`, `429`, `5xx`, timeouts, or transport failures
-- record the `WWW-Authenticate` header when present for debugging; invalidation does not depend on that header
+- record `AuthResponseContext.wwwAuthenticate` when present for debugging; invalidation does not depend on that header
 
 This keeps the policy precise while remaining compatible with providers that omit `WWW-Authenticate`.
 
