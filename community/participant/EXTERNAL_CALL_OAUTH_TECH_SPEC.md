@@ -4,22 +4,13 @@
 
 Draft for iterative refinement.
 
-This document turns the requirements in `community/participant/EXTERNAL_CALL_OAUTH_REQUIREMENTS.md` into a codebase-grounded design for the current participant implementation.
+This document turns the requirements into a codebase-grounded design for the current participant implementation.
 
 ## Scope and Final-State Decisions
 
 Add OAuth-based service-to-service authentication to participant external calls without changing the Daml external-call business protocol.
 
-This spec is grounded in the current implementation:
-
-- `community/participant/src/main/scala/com/digitalasset/canton/participant/config/ExtensionServiceConfig.scala`
-- `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionServiceManager.scala`
-- `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/HttpExtensionServiceClient.scala`
-- `community/base/src/main/scala/com/digitalasset/canton/sequencing/authentication/AuthenticationTokenProvider.scala`
-- `community/base/src/main/scala/com/digitalasset/canton/sequencing/authentication/grpc/AuthenticationTokenManager.scala`
-- `community/base/src/main/scala/com/digitalasset/canton/config/AuthServiceConfig.scala`
-- `community/base/src/main/scala/com/digitalasset/canton/auth/AuthServiceJWT.scala`
-- `community/base/src/main/scala/com/digitalasset/canton/auth/CachedJwtVerifierLoader.scala`
+This spec is grounded in the current participant external-call, auth, and validation implementation.
 
 The following choices are assumed throughout this draft:
 
@@ -76,7 +67,7 @@ Existing Canton pieces are reusable in pattern, not in exact type:
 
 ### Auth boundary
 
-Add `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/auth/` and move all auth-specific behavior behind a new provider boundary. The auth layer is responsible for:
+Add a dedicated participant extension auth package and move all auth-specific behavior behind a new provider boundary. The auth layer is responsible for:
 
 - resolving auth config into a concrete strategy
 - decorating outbound business requests with auth material
@@ -84,7 +75,7 @@ Add `community/participant/src/main/scala/com/digitalasset/canton/participant/ex
 - validating local auth configuration and remote auth reachability
 - owning auth-side lifecycle resources so they can be closed with the extension manager
 
-Validation reporting remains under `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/`, because it is an extension-manager boundary type rather than an auth-internal type.
+Validation reporting remains at the extension-manager boundary rather than inside auth internals.
 
 Proposed logical types:
 
@@ -590,7 +581,7 @@ Introduce one global validation field:
 
 Keep `EngineExtensionsConfig.echoMode` unchanged as a test-only bypass.
 
-Replace `ExtensionValidationResult.Valid | Invalid(errors)` with a structured per-extension report in `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionService.scala`:
+Replace `ExtensionValidationResult.Valid | Invalid(errors)` with a structured per-extension report:
 
 ```scala
 final case class ExtensionValidationReport(
@@ -679,36 +670,33 @@ Remote probe rules:
 
 No compatibility layer is required for existing users, but the repository still needs an internal migration to the new config and validation model.
 
-### Existing files likely to change
+### Main implementation areas
 
-- `community/participant/src/main/scala/com/digitalasset/canton/participant/ParticipantNode.scala`
+- participant node startup and lifecycle
   - pass `Clock` into `ExtensionServiceManager`
   - await startup validation before exposing services
   - register the extension manager in the node closeable set
-- `community/participant/src/main/scala/com/digitalasset/canton/participant/config/ExtensionServiceConfig.scala`
+- extension config model
   - replace legacy transport/auth fields with explicit endpoint and auth config
   - replace validation booleans with `validationMode`
-- `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionServiceManager.scala`
+- extension manager
   - instantiate auth providers
   - own auth-provider lifecycle
   - execute validation across all extensions
   - stop relying on one globally shared `HttpClient` for all TLS and auth cases
-- `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/HttpExtensionServiceClient.scala`
+- HTTP extension client
   - remove token lifecycle logic
   - rewrite the outer retry loop around async `FutureUnlessShutdown` composition
   - integrate auth-provider calls and structured auth-failure handling
   - clamp connect and request timeouts to the remaining outer deadline
-- `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionService.scala`
+- extension service interface
   - replace `ExtensionValidationResult` with `ExtensionValidationReport`
-
-### New files likely to be added
-
-- `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/auth/*`
-- `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/HttpTransportValidationHelper.scala`
+- new supporting code
+  - add the auth package
+  - add a transport-validation helper
 
 ### Repo-wide migration work
 
-- update `community/app-base/src/main/scala/com/digitalasset/canton/config/CantonConfig.scala` readers and writers for the new extension config structure
 - update participant test fixtures and helpers that construct `ExtensionServiceConfig` directly
 - update external-call integration tests to use the new endpoint and auth config shape
 - update sample configs and documentation-backed test resources that still use legacy fields
@@ -768,7 +756,7 @@ Unit coverage:
 - fixed-lifetime `private_key_jwt` construction
 - background refresh using an injected clock rather than wall-clock sleeps
 
-Integration coverage under `community/app/src/test/scala/com/digitalasset/canton/integration/tests/externalcall/*`:
+Integration coverage:
 
 - unauthenticated external calls still work under `auth.mode = none`
 - OAuth-protected calls succeed end to end
