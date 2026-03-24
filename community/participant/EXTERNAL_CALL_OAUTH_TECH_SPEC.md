@@ -298,8 +298,11 @@ The only new HTTP-specific field that the token endpoint needs beyond those exis
 
 Implementation rule:
 
-- the resource-server endpoint block uses existing `FullClientConfig` / `ClientConfig` field vocabulary and config readers
-- the token-endpoint block uses the same field vocabulary plus `path`
+- `external_call` introduces its own narrower endpoint ADTs under participant config; it does not literally embed `FullClientConfig`
+- those endpoint ADTs reuse only the existing field names and TLS vocabulary: `address`, `port`, and `tls`
+- `keepAliveClient` is not part of the `external_call` config contract
+- PureConfig continues to derive readers and writers from the new `ExtensionServiceConfig`-local case classes rather than reusing `FullClientConfig` codecs
+- the token-endpoint block uses the same endpoint field vocabulary plus `path`
 
 ### Token-endpoint URI derivation
 
