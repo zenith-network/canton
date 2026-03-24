@@ -303,7 +303,7 @@ The top-level per-extension config MUST carry:
 - `host`
 - `port`
 - `use-tls`
-- `trust-collection-file` for the resource server when custom trust material is required
+- `trust-collection-file`
 - `connect-timeout`
 - `request-timeout`
 - `max-total-timeout`
@@ -331,7 +331,7 @@ The auth configuration MUST support:
   - `host`
   - `port`
   - `path`
-  - `trust-collection-file` when custom trust material is required
+  - `trust-collection-file`
 - `client-id`
 - `private-key-file`
 - `key-id` when `kid` emission is required
@@ -341,8 +341,11 @@ When `auth.type = oauth`, the resource server MUST use TLS.
 
 When `auth.type = oauth`, the token endpoint MUST use TLS.
 
-When a TLS endpoint omits `trust-collection-file`, the implementation MUST use the JVM default
-trust store for that endpoint.
+If a TLS endpoint provides `trust-collection-file`, the implementation MUST use that trust
+collection for that endpoint.
+
+If a TLS endpoint omits `trust-collection-file`, the implementation MUST use the JVM default trust
+store for that endpoint.
 
 The token endpoint path MUST start with `/`.
 

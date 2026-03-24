@@ -18,6 +18,7 @@ After this change, a reader who only has this repository will be able to open `c
 - [x] (2026-03-25 00:31 +04) Reviewed the final spec for obsolete terms and contradictions, then updated this ExecPlan with outcomes and evidence.
 - [x] (2026-03-25 00:42 +04) Revised the spec again so it uses canonical normative wording throughout instead of review-style design prose.
 - [x] (2026-03-25 00:49 +04) Removed the remaining implementation choices from the spec by cementing exact client topology, token-refresh concurrency, token-endpoint transport semantics, trust-store defaults, and metrics policy.
+- [x] (2026-03-25 00:53 +04) Clarified the `trust-collection-file` wording so the canonical spec states the exact present-versus-absent trust-store semantics instead of describing "custom trust material" informally.
 
 ## Surprises & Discoveries
 
@@ -178,6 +179,10 @@ Validation evidence from the completed rewrite:
     rg -n '\bMAY\b|when possible|implementation-specific|broadly|optional ' community/participant/EXTERNAL_CALL_OAUTH_TECH_SPEC.md -S
     => no matches
 
+    TLS trust-store semantics:
+      - if `trust-collection-file` is present, the implementation MUST use it
+      - if `trust-collection-file` is absent, the implementation MUST use the JVM default trust store
+
 ## Interfaces and Dependencies
 
 The rewritten spec must refer to the following repository interfaces and preserve their current responsibilities unless it explicitly proposes a change:
@@ -204,3 +209,5 @@ Revision note: After completing the rewrite, this plan was updated to mark all w
 Revision note: After the user required canonical wording, this plan was updated again to record the normative-language revision and the final validation checks that distinguish requirement text from explanatory prose.
 
 Revision note: After the user required unconditional canonicality, this plan was updated again to record the final pass that removed the remaining implementation choices from the spec.
+
+Revision note: After the user called out the ambiguous "custom trust material" wording, this plan was updated again to record the explicit present-versus-absent semantics for `trust-collection-file`.
