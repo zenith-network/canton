@@ -200,7 +200,7 @@ Rotation application points:
 
 ```hocon
 extension-settings = {
-  validation-mode = strict-remote
+  validation-mode = remote
 }
 
 extensions = {
@@ -250,34 +250,33 @@ extensions = {
 
 Startup validation is an explicit participant-startup gate. Except in `echoMode`, `ParticipantNode` must await `ExtensionServiceManager.validateAllExtensions()` before enabling any runtime path that can execute or re-execute external calls, including synchronizer-side reinterpretation and confirmation, and before exposing Ledger API services.
 
-`validation-mode = off | local | best-effort-remote | strict-remote`
+`validation-mode = off | local | remote`
 
-Replace `ExtensionValidationResult.Valid | Invalid(errors)` with a structured per-extension report:
+The validation result surface stays simple:
 
 ```scala
-final case class ExtensionValidationReport(
-  extensionId: String,
-  localErrors: Seq[String],
-  remoteErrors: Seq[String],
-  remoteWarnings: Seq[String],
-)
+sealed trait ExtensionValidationResult
+object ExtensionValidationResult {
+  case object Valid extends ExtensionValidationResult
+  final case class Invalid(errors: Seq[String]) extends ExtensionValidationResult
+}
 ```
 
 Contract:
 
-- `ExtensionServiceClient.validateConfiguration(validationMode)` returns `ExtensionValidationReport`
-- `ExtensionServiceManager.validateAllExtensions()` returns `Map[String, ExtensionValidationReport]`
-- `ExtensionServiceManager` reports per configured `extensionId`; `ParticipantNode` interprets the aggregate against `validation-mode`
-- `off` skips startup validation and produces no report
-- in all other modes, validation is independent per configured `extensionId`: local validation runs first, and remote validation for that `extensionId` runs only if local validation succeeded
+- `ExtensionServiceClient.validateConfiguration(validationMode)` returns `ExtensionValidationResult`
+- `ExtensionServiceManager.validateAllExtensions()` returns `Map[String, ExtensionValidationResult]`
+- `ExtensionServiceManager` reports one result per configured `extensionId`; `ParticipantNode` interprets the aggregate against `validation-mode`
+- `off` skips startup validation and `validateAllExtensions()` returns `Map.empty`
+- in `local` and `remote`, validation is independent per configured `extensionId`
 - local validation covers malformed or inconsistent config, unreadable keys or trust material, and invalid TLS material
-- `local` fails startup on any `localErrors`
-- `best-effort-remote` runs remote validation where applicable, fails startup on `localErrors`, and downgrades `remoteErrors` to warnings when interpreting results
-- `strict-remote` runs the same validation work as `best-effort-remote` and fails startup on any `localErrors` or `remoteErrors`
-- `remoteWarnings` never block startup; clients always report remote validation failures in `remoteErrors`
-- `auth.mode = none` remote validation performs only the resource-server transport probe; `auth.mode = oauth` also performs real token acquisition
-- remote validation must not send a business request through `/api/v1/external-call`: token-endpoint validation performs a real token acquisition, and resource-server validation uses a dedicated transport-validation helper that performs only DNS resolution, TCP connect, and, when TLS is enabled, SSL/TLS handshake using the same trust material as the runtime client, without sending an HTTP method, path, body, or headers
-- in `echoMode`, no HTTP clients, OAuth token managers, or remote probes are constructed; `off` returns no report and other modes return one empty-success report per configured `extensionId` with empty `localErrors`, `remoteErrors`, and `remoteWarnings`
+- `local` runs only local validation and fails startup on any `Invalid` result
+- `remote` runs the same local validation first; if local validation fails for an extension, remote validation for that extension is skipped
+- `remote` then performs a normal remote validation attempt using the same HTTP and OAuth building blocks as runtime calls, but through the existing lightweight validation request rather than a user business call
+- `auth.mode = none` remote validation performs the resource-server validation request
+- `auth.mode = oauth` remote validation performs real token acquisition and then the same resource-server validation request with the acquired token
+- `remote` is strict: any `Invalid` result fails startup
+- in `echoMode`, no HTTP clients, OAuth token managers, or remote validation calls are constructed; `off` returns `Map.empty` and other modes return `Valid` for each configured `extensionId`
 
 ## Error Model and Boundary Mapping
 
@@ -336,5 +335,5 @@ Metrics:
 Tests:
 
 - unit coverage for auth config parsing and exclusivity, OAuth token acquisition success and failure, concurrent callers sharing one token acquisition, expired cached tokens forcing on-demand reacquisition, token-conditional invalidation on `401`, audience and scope propagation, private-key and certificate loading failures, deadline composition between auth and business retries, and fixed-lifetime `private_key_jwt` construction
-- integration coverage for unauthenticated external calls under `auth.mode = none`, OAuth-protected calls succeeding end to end, expired cached tokens causing the next call to obtain a fresh token successfully, `401` causing one invalidate-and-replay cycle, submission and validation both succeeding under the same OAuth config, submission and validation producing the same business response even though access tokens and client assertions differ between runs, signing-key rotation taking effect on the next token acquisition, resource-server or token-endpoint certificate rotation taking effect after participant restart, and remote validation not sending a business `_health` call
+- integration coverage for unauthenticated external calls under `auth.mode = none`, OAuth-protected calls succeeding end to end, expired cached tokens causing the next call to obtain a fresh token successfully, `401` causing one invalidate-and-replay cycle, submission and validation both succeeding under the same OAuth config, submission and validation producing the same business response even though access tokens and client assertions differ between runs, signing-key rotation taking effect on the next token acquisition, resource-server or token-endpoint certificate rotation taking effect after participant restart, and remote validation succeeding through the lightweight validation request path
 - testing infrastructure must use an injectable clock for token-expiry tests and must mock token issuance through a dedicated token client or `MockOAuthServer`, not through the resource-server mock
