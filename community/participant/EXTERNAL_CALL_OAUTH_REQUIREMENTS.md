@@ -302,7 +302,7 @@ Validation must avoid invoking business functions.
 Auth-aware validation must not implicitly require successful contact with an authorization server during startup in every deployment mode. The design must distinguish between:
 
 - local configuration validation
-- best-effort remote auth validation
+- best-effort remote validation
 - fail-closed startup behavior when explicitly configured
 
 Failure rule:
@@ -310,6 +310,7 @@ Failure rule:
 - in every mode except `off`, local validation failures are fatal to startup
 - local validation failures include malformed config, mutually inconsistent config, unreadable private keys, unreadable certificate or trust files, and invalid TLS material
 - only remote validation failures are tolerated in best-effort remote mode
+- in strict remote mode, any remote validation failure is fatal, including token acquisition failure and resource-server transport-probe failure
 
 Mixed-set and aggregation rule:
 
@@ -332,7 +333,7 @@ Failures must distinguish between:
 
 OAuth integration must not collapse all of these into the same generic external call error path.
 
-The internal auth layer must use a structured auth-failure envelope that carries failure class, message, and the optional participant-generated token-endpoint request identifier when a token-endpoint HTTP interaction had already started.
+The internal auth layer must use a structured auth-failure envelope that carries failure class, message, and the optional participant-generated token-endpoint request identifier when a token-endpoint HTTP interaction had already started. That envelope must distinguish at least token-endpoint HTTP failure, timeout, connect/I/O failure, TLS failure, malformed token response, unsupported `token_type`, client-assertion signing failure, and other local auth-material failure.
 
 At the engine-facing `ExternalCallError` boundary, those internal classes must map back deterministically to `statusCode`, `message`, and `requestId`. HTTP status codes from the failing upstream interaction must be preserved where available; synthesized boundary statuses must be used consistently for timeout, connect/I/O, malformed token-response, and participant-side auth-material failures. When multiple HTTP interactions occur inside one outer business attempt, `requestId` must use a deterministic precedence rule based on the interaction that produced the final returned failure.
 

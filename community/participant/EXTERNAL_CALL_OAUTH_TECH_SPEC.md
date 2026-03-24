@@ -155,6 +155,10 @@ Concrete supporting types:
 - `final case class TokenEndpointIoFailure(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
 - `final case class TokenEndpointTlsFailure(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
 - `final case class MalformedTokenResponse(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
+- `final case class UnsupportedTokenType(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
+- `final case class ClientAssertionSigningFailure(message: String) extends ExternalCallAuthFailure {`
+- `  override val requestId: Option[String] = None`
+- `}`
 - `final case class LocalAuthMaterialFailure(message: String) extends ExternalCallAuthFailure {`
 - `  override val requestId: Option[String] = None`
 - `}`
@@ -170,6 +174,9 @@ Contract rules:
 - `PreparedAuth.tokenUsed` is the exact token attached to the outgoing resource request and is the value used for token-conditional invalidation
 - `PreparedAuth.tokenEndpointRequestId` records the last participant-generated token-endpoint request id involved in preparing that auth state for the current outer attempt
 - `ExternalCallAuthFailure` is the auth-layer failure envelope used both before the first business request and during `401` recovery; it carries the failure class, message, and token-endpoint request id when a token-endpoint HTTP interaction had already been started
+- `UnsupportedTokenType` is used only when the token response contains `token_type` but its value is not `Bearer`
+- `MalformedTokenResponse` is used for other token-response shape problems such as missing fields or unusable expiry metadata
+- `ClientAssertionSigningFailure` is used only for local signing failures while building `private_key_jwt`; `LocalAuthMaterialFailure` remains the class for other local auth-material and key-loading failures
 - `AuthResponseContext` carries the subset of resource-response metadata the auth layer is allowed to inspect
 - `HttpExtensionServiceClient` generates the resource-server request id locally before send, places it in the configured request-id header, and copies that same participant-generated value into `AuthResponseContext.resourceRequestId`
 - `HttpExtensionServiceClient` constructs `AuthResponseContext` from the concrete resource-server `HttpResponse` plus that locally generated resource request id before releasing the response object
@@ -338,7 +345,8 @@ Validation responsibility is split as follows:
 Foreground timeout rule:
 
 - every foreground HTTP connect attempt uses an effective connect timeout of `min(connect-timeout, remaining max-total-timeout budget)`
-- every foreground token-endpoint HTTP attempt must clamp its timeout to `min(request-timeout, remaining max-total-timeout budget)`
+- every foreground token-endpoint HTTP attempt uses an effective request timeout of `min(request-timeout, remaining max-total-timeout budget)`
+- every foreground resource-server HTTP attempt uses an effective request timeout of `min(request-timeout, remaining max-total-timeout budget)`
 - if no budget remains, token acquisition fails immediately and the business request is not sent
 - if the effective connect timeout is non-positive, the connect attempt is not started
 
@@ -602,7 +610,7 @@ For one outer external-call attempt:
 1. `HttpExtensionServiceClient` calculates the remaining `maxTotalTimeout` budget.
 2. It calls `ExternalCallAuthProvider.prepareRequest(deadline)`.
 3. `prepareRequest` returns `PreparedAuth`.
-4. `HttpExtensionServiceClient` sends the request to `/api/v1/external-call` with the existing business headers unchanged, the auth header from `PreparedAuth`, and the per-attempt timeout clamped to the remaining outer budget.
+4. `HttpExtensionServiceClient` sends the request to `/api/v1/external-call` with the existing business headers unchanged, the auth header from `PreparedAuth`, and an effective request timeout of `min(request-timeout, remaining outer budget)`.
 5. If the response is not `401`, that response is the outcome of the outer attempt.
 6. If the response is `401`, `HttpExtensionServiceClient` reuses the locally generated outbound resource request id for that HTTP interaction, extracts `statusCode` and the first `WWW-Authenticate` header from the concrete `HttpResponse`, builds `AuthResponseContext`, and calls `ExternalCallAuthProvider.handleResponse(responseContext, preparedAuth, deadline)`.
 7. `handleResponse` may perform one auth-local replay inside the same outer attempt by returning `ReplayOnceWithFreshAuth(nextPreparedAuth)`.
@@ -688,8 +696,8 @@ Final timeout rule:
 
 - `HttpExtensionServiceClient` computes one absolute deadline from `max-total-timeout`
 - every foreground HTTP connect attempt uses an effective connect timeout of `min(connect-timeout, remaining outer budget)` and can occur only while that effective timeout is positive
-- every foreground token-endpoint call clamps its timeout to the remaining budget
-- every resource-server call clamps its timeout to the remaining budget
+- every foreground token-endpoint call uses an effective request timeout of `min(request-timeout, remaining outer budget)`
+- every foreground resource-server call uses an effective request timeout of `min(request-timeout, remaining outer budget)`
 - neither side may issue a request once the remaining budget is non-positive
 - the implementation must enforce the outer deadline during connect time as well as request time; keeping a longer client-level connect timeout without additional deadline enforcement is not sufficient
 - background refresh is excluded from that outer deadline because it is not part of a business request, but it still uses the configured per-attempt timeout and token-manager retry limits
@@ -756,7 +764,9 @@ The flattening rule is:
   - `TokenEndpointTimeout(message, requestId)`, including timeout while waiting on a shared in-flight acquisition future, maps to `408`
   - `TokenEndpointIoFailure(message, requestId)` maps to `503`
   - `TokenEndpointTlsFailure(message, requestId)` maps to `503`
+  - `ClientAssertionSigningFailure(message)` maps to `500`
   - `LocalAuthMaterialFailure(message)` maps to `500`
+  - `UnsupportedTokenType(message, requestId)` maps to `502`
   - `MalformedTokenResponse(message, requestId)` maps to `502`
   - prefix the message with `OAuth token acquisition failed:`
 - token rejection by the resource server
@@ -876,7 +886,7 @@ Global validation modes:
 - `strict-remote`
   - same checks as `best-effort-remote`
   - fail startup on any local validation error
-  - fail startup if remote auth validation fails
+  - fail startup if any remote validation fails, including token acquisition failure or resource-server transport-probe failure
 
 Mixed-extension semantics:
 
