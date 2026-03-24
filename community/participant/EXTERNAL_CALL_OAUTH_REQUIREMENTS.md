@@ -137,6 +137,7 @@ In practice:
 - external call transport retries remain in the HTTP client layer
 - token rejection must invalidate cached auth state before the next retry attempt
 - OAuth token acquisition must use an explicit HTTP-specific retryability matrix; it must not inherit the gRPC exception retry policy from sequencer authentication implicitly
+- fatal auth failures must remain terminal for the outer business-request retry loop even when their engine-facing boundary mapping uses an HTTP status code that is retryable in ordinary transport handling
 - token acquisition and refresh must fit within the external call timeout model; they must not introduce an unbounded second budget that can silently overrun the call's configured deadlines
 - foreground connect time and request time must both be composed with the remaining outer external-call deadline; neither may overrun `max-total-timeout`
 - if a distinct auth sub-budget is introduced, it must be explicitly bounded and composed with the existing external call timeouts

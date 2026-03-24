@@ -650,8 +650,10 @@ Outcome handling after the auth-local replay is:
   - if the outer retry loop retries, that consumes one `maxRetries` slot
 - replay fails during foreground token acquisition
   - that token-acquisition failure becomes the outcome of the outer attempt
-  - the outer retry loop classifies it from the flattened boundary status in the same way as any other outer-attempt failure
-  - if the outer retry loop retries, that consumes one `maxRetries` slot
+  - the outer retry loop classifies it from the structured `ExternalCallAuthFailure`, not from the later engine-facing flattened HTTP status code
+  - retryable auth failures follow the token-endpoint retryability matrix in this spec
+  - fatal auth failures terminate the outer attempt and the outer retry loop does not retry them
+  - if the outer retry loop retries a retryable auth failure, that consumes one `maxRetries` slot
 
 ### Retry composition
 
@@ -678,6 +680,7 @@ Retry accounting rule:
 - the auth-local replay does not increment the outer attempt counter and does not consume a `maxRetries` slot
 - any retryable result produced after the auth-local replay is treated as the final result of that outer attempt
 - if the outer loop retries after that result, the outer attempt counter increments once
+- retryability of auth failures is decided from the structured auth-failure class before boundary flattening; engine-facing `500`, `502`, or `503` statuses produced from fatal auth failures do not make those failures retryable
 
 This means foreground token acquisition needs a deadline-aware API. The auth layer cannot assume it has a fresh timeout budget independent from the external call.
 
@@ -732,6 +735,11 @@ Implementation rule:
 - use the structured error class for logs, metrics, and retry decisions
 
 This keeps the external-call protocol stable while satisfying the requirement for clear failure classification.
+
+Retry-classification rule:
+
+- `HttpExtensionServiceClient` must decide whether to retry an auth failure from the structured `ExternalCallAuthFailure` class before flattening it to engine-facing `statusCode`, `message`, and `requestId`
+- flattened boundary status codes preserve the external-call protocol but do not define retryability for auth failures
 
 ### Engine-facing boundary mapping
 
