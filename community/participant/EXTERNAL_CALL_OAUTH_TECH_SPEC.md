@@ -820,7 +820,9 @@ Remote validation must not send a synthetic business request through `/api/v1/ex
 Final remote-probe rule:
 
 - token-endpoint validation performs a real token acquisition
-- resource-server validation uses a dedicated transport-validation helper that stops at transport reachability: DNS resolution, TCP connect, TLS handshake, and equivalent HTTP-client connection setup
+- resource-server validation uses a dedicated raw transport-validation helper, not `HttpExtensionServiceClient`
+- the helper performs only DNS resolution, TCP connect, and, when TLS is enabled, SSL/TLS handshake using the same trust material as the runtime resource-server client
+- the helper does not send an HTTP method, path, body, or headers
 - validation must not send `X-Daml-External-*` headers and must not invoke a Daml business function such as `_health`
 
 This keeps the validation control point global while satisfying the requirement to avoid business-function invocation.
