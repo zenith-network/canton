@@ -190,6 +190,7 @@ Those modes do not share the same deadline source:
 
 - talks only to the configured token endpoint
 - uses its own TLS settings
+- generates a request id for each token-endpoint HTTP interaction for logging and error propagation
 - receives an absolute deadline from the outer external-call attempt for foreground acquisition
 - returns `OAuthAccessTokenWithExpiry`
 - never logs secret-bearing inputs or outputs
@@ -645,7 +646,12 @@ The flattening rule is:
 
 Request-id rule:
 
-- if the failing path involved an HTTP request, return the request id generated for that HTTP interaction
+- the boundary `requestId` is the request id from the last HTTP interaction that determined the final failure returned for that outer attempt
+- if the final failure is a token-endpoint HTTP failure before any replay request is sent, return the token-endpoint request id
+- if the final failure is the initial resource-server response and no auth-local replay is performed, return the initial resource-server request id
+- if a `401` triggers token acquisition and then a replay request is sent, the replay request id supersedes both the original `401` request id and the token-endpoint request id
+- if token acquisition after a `401` fails before any replay request is sent, return the token-endpoint request id when a token-endpoint HTTP request was sent
+- if token acquisition after a `401` fails before any token-endpoint HTTP request was sent, return the original `401` resource-server request id
 - if the failure occurred before any HTTP request was sent, return `None`
 
 ## Validation
