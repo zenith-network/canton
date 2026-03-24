@@ -318,6 +318,8 @@ Failures must distinguish between:
 
 OAuth integration must not collapse all of these into the same generic external call error path.
 
+At the engine-facing `ExternalCallError` boundary, those internal classes must map back deterministically to `statusCode`, `message`, and `requestId`. HTTP status codes from the failing upstream interaction must be preserved where available; synthesized boundary statuses must be used consistently for timeout, connect/I/O, malformed token-response, and participant-side auth-material failures.
+
 ## Security Requirements
 
 ### R24. TLS By Default

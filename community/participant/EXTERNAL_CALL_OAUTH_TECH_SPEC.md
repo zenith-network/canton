@@ -547,6 +547,38 @@ Implementation rule:
 
 This keeps the external-call protocol stable while satisfying the requirement for clear failure classification.
 
+### Engine-facing boundary mapping
+
+`ExtensionServiceExternalCallHandler` continues to expose only:
+
+- `statusCode`
+- `message`
+- `requestId`
+
+The flattening rule is:
+
+- token acquisition failure
+  - if the token endpoint returned an HTTP response, preserve that HTTP status code
+  - if token acquisition timed out before an HTTP response, return `408`
+  - if token acquisition failed due to connect or I/O failure before an HTTP response, return `503`
+  - if token acquisition failed due to local signing-key reload, local auth-material failure, or other participant-side auth setup failure at call time, return `500`
+  - if token acquisition failed because the token response was malformed, omitted required fields, or returned an unsupported `token_type`, return `502`
+  - prefix the message with `OAuth token acquisition failed:`
+- token rejection by the resource server
+  - after the auth-local replay is exhausted, return `401`
+  - use the message `Unauthorized - OAuth token rejected by resource server`
+- resource-server transport failure
+  - preserve the current transport-derived status mapping used by `HttpExtensionServiceClient`
+  - preserve the current transport-style messages
+- resource-server application error
+  - preserve the resource server's HTTP status code
+  - preserve the current body-to-message mapping used by `HttpExtensionServiceClient`
+
+Request-id rule:
+
+- if the failing path involved an HTTP request, return the request id generated for that HTTP interaction
+- if the failure occurred before any HTTP request was sent, return `None`
+
 ## Validation
 
 ### Current behavior
