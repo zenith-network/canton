@@ -181,7 +181,7 @@ Client authentication and key-handling rules:
 
 Accepted tradeoff: issued access tokens are still bearer tokens and remain replayable until expiry if exfiltrated; this is accepted in exchange for a simpler and more canonical external-call auth contract.
 
-## Configuration and Startup Validation
+## Configuration
 
 ### Config Model
 
@@ -195,6 +195,12 @@ Implementation rules:
 - those ADTs reuse the existing field vocabulary and TLS semantics
 - `keepAliveClient` is not part of the `external_call` contract
 - PureConfig readers and writers remain local to the new `ExtensionServiceConfig`-specific case classes
+
+Global extension settings:
+
+- `EngineExtensionsConfig` owns extension-wide startup-validation policy
+- `validation-mode` lives under those global settings and replaces the current pair of startup-validation booleans
+- `echoMode` remains a test-only knob
 
 Auth and endpoint rules:
 
@@ -221,73 +227,13 @@ Rotation application points:
 - token-endpoint and resource-server trust material is loaded during explicit local validation and again when the corresponding runtime HTTP client is built
 - replacing trust material therefore takes effect on participant restart, not via hot reload
 
-### Startup Validation
-
-Startup validation is explicit in this design and is a node-startup gate, not only a Ledger API gate. `ParticipantNode` must await `ExtensionServiceManager.validateAllExtensions()` before enabling any runtime path that can execute or re-execute external calls, including synchronizer-side reinterpretation and confirmation, and before exposing Ledger API services. `EngineExtensionsConfig.echoMode` remains a test-only bypass.
-
-Validation mode:
-
-- `validation-mode = off | local | best-effort-remote | strict-remote`
-
-Replace `ExtensionValidationResult.Valid | Invalid(errors)` with a structured per-extension report:
-
-```scala
-final case class ExtensionValidationReport(
-  extensionId: String,
-  localErrors: Seq[String],
-  remoteErrors: Seq[String],
-  remoteWarnings: Seq[String],
-)
-```
-
-API rules:
-
-- `ExtensionServiceClient.validateConfiguration(validationMode)` returns `ExtensionValidationReport`
-- `ExtensionServiceManager.validateAllExtensions()` returns `Map[String, ExtensionValidationReport]`
-- `ExtensionServiceManager` reports results but never decides startup success or failure; `ParticipantNode` interprets the aggregated report against `validation-mode`
-
-Mode behavior:
-
-- `off`: skip startup validation entirely and produce no startup report
-- `local`: validate config completeness and mutual consistency, load private keys and TLS trust material, build TLS contexts, and fail startup on any local validation error
-- `best-effort-remote`: do all local validation, then run remote checks; fail startup on local validation errors only and downgrade remote validation failures to warnings when interpreting the aggregated report
-- `strict-remote`: do the same checks as `best-effort-remote` and fail startup on any local or remote validation error
-- `localErrors` are fatal in every mode except `off`; `remoteWarnings` never block startup
-- clients always report remote validation failures in `remoteErrors`; only `ParticipantNode` may downgrade them to warnings in `best-effort-remote`
-
-Local validation failures include malformed config, mutually inconsistent config, unreadable keys, unreadable trust material, and invalid TLS material.
-
-Per-auth-mode remote behavior:
-
-- `auth.mode = none` performs transport and config validation only; in remote modes it performs only the resource-server transport probe
-- `auth.mode = oauth` performs transport and config validation plus OAuth-specific validation; in remote modes it performs real token acquisition and the resource-server transport probe
-
-Echo mode behavior:
-
-- `ExtensionServiceManager` instantiates `EchoExtensionServiceClient` for every extension, so no HTTP clients, auth providers, token managers, or remote probes are constructed
-- if `validation-mode = off`, `validateAllExtensions()` returns no report; otherwise it returns one empty-success report per configured extension with empty `localErrors`, `remoteErrors`, and `remoteWarnings`
-
-Startup algorithm:
-
-1. Sort extensions by extension id.
-2. Run local validation for every extension.
-3. Record local failures and skip remote validation for those extensions.
-4. Run the remote checks required by `validation-mode` for the remaining extensions.
-5. Aggregate results deterministically by extension id.
-
-Remote validation must not send a synthetic business request through `/api/v1/external-call`.
-
-Remote probe rules:
-
-- token-endpoint validation performs a real token acquisition
-- resource-server validation uses a dedicated transport-validation helper, not `HttpExtensionServiceClient`
-- that helper performs only DNS resolution, TCP connect, and, when TLS is enabled, SSL/TLS handshake using the same trust material as the runtime client
-- it does not send an HTTP method, path, body, or headers
-- it does not send `X-Daml-External-*` headers and does not invoke a Daml function such as `_health`
-
 ### Example Config
 
 ```hocon
+extension-settings = {
+  validation-mode = strict-remote
+}
+
 extensions = {
   test-ext = {
     name = "test-ext"
@@ -335,6 +281,39 @@ extensions = {
   }
 }
 ```
+
+## Startup Validation Contract
+
+Startup validation is an explicit participant-startup gate. Except in `echoMode`, `ParticipantNode` must await `ExtensionServiceManager.validateAllExtensions()` before enabling any runtime path that can execute or re-execute external calls, including synchronizer-side reinterpretation and confirmation, and before exposing Ledger API services.
+
+`validation-mode = off | local | best-effort-remote | strict-remote`
+
+Replace `ExtensionValidationResult.Valid | Invalid(errors)` with a structured per-extension report:
+
+```scala
+final case class ExtensionValidationReport(
+  extensionId: String,
+  localErrors: Seq[String],
+  remoteErrors: Seq[String],
+  remoteWarnings: Seq[String],
+)
+```
+
+Contract:
+
+- `ExtensionServiceClient.validateConfiguration(validationMode)` returns `ExtensionValidationReport`
+- `ExtensionServiceManager.validateAllExtensions()` returns `Map[String, ExtensionValidationReport]`
+- `ExtensionServiceManager` reports per configured `extensionId`; `ParticipantNode` interprets the aggregate against `validation-mode`
+- `off` skips startup validation and produces no report
+- in all other modes, validation is independent per configured `extensionId`: local validation runs first, and remote validation for that `extensionId` runs only if local validation succeeded
+- local validation covers malformed or inconsistent config, unreadable keys or trust material, and invalid TLS material
+- `local` fails startup on any `localErrors`
+- `best-effort-remote` runs remote validation where applicable, fails startup on `localErrors`, and downgrades `remoteErrors` to warnings when interpreting results
+- `strict-remote` runs the same validation work as `best-effort-remote` and fails startup on any `localErrors` or `remoteErrors`
+- `remoteWarnings` never block startup; clients always report remote validation failures in `remoteErrors`
+- `auth.mode = none` remote validation performs only the resource-server transport probe; `auth.mode = oauth` also performs real token acquisition
+- remote validation must not send a business request through `/api/v1/external-call`: token-endpoint validation performs a real token acquisition, and resource-server validation uses a dedicated transport-validation helper that performs only DNS resolution, TCP connect, and, when TLS is enabled, SSL/TLS handshake using the same trust material as the runtime client, without sending an HTTP method, path, body, or headers
+- in `echoMode`, no HTTP clients, auth providers, token managers, or remote probes are constructed; `off` returns no report and other modes return one empty-success report per configured `extensionId` with empty `localErrors`, `remoteErrors`, and `remoteWarnings`
 
 ## Error Model and Boundary Mapping
 
