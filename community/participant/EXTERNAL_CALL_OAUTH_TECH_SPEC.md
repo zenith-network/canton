@@ -126,12 +126,14 @@ final case class FailAuth(authFailure: ExternalCallAuthFailure) extends AuthResp
 
 Contract rules:
 
-- `prepareRequest` performs any foreground token acquisition needed for the current outer attempt.
+- The methods above are the per-request hot-path contract. Auth providers also expose startup-validation and close hooks owned by the extension manager, but those hooks are intentionally omitted here because validation reports stay at the extension-manager boundary.
+- `prepareRequest` performs any foreground token acquisition needed before sending the first resource-server request of the current outer attempt.
 - `prepareRequest` receives the absolute outer deadline and must clamp token-endpoint work to that deadline.
 - `PreparedAuth.tokenUsed` is the exact token attached to the outgoing request and is the value used for token-conditional invalidation.
 - `PreparedAuth.tokenEndpointRequestId` records the last participant-generated token-endpoint request id involved in preparing auth for the current outer attempt.
 - `AuthResponseContext` carries only the metadata the auth layer is allowed to inspect: status code, participant-generated resource request id, and the first `WWW-Authenticate` header when present.
 - Request ids in this design are participant-generated outbound correlation ids. Servers may echo them, but the protocol does not depend on a response-header request-id contract.
+- `handleResponse` may invalidate cached auth state and invoke the same foreground-acquisition path used by `prepareRequest` to obtain fresh auth for one auth-local replay.
 - `handleResponse` may request at most one auth-local replay inside an outer attempt and never advances the outer retry counter.
 
 ### `HttpExtensionServiceClient` after refactor
@@ -151,9 +153,11 @@ It stops owning:
 - token invalidation policy
 - token-endpoint request construction
 
+For one external-call operation, `HttpExtensionServiceClient` computes one absolute deadline from `maxTotalTimeout` before the first outer attempt. Each outer attempt then uses the remaining budget against that fixed deadline.
+
 Each outer attempt becomes:
 
-1. compute remaining `maxTotalTimeout`
+1. compute remaining budget against the operation deadline
 2. ask the auth provider to prepare auth using that deadline
 3. send the resource request
 4. let the auth provider inspect `401` responses
@@ -260,7 +264,7 @@ Timeout rules:
 - for foreground work, effective connect timeout is `min(connect-timeout, remaining max-total-timeout)`
 - for foreground work, effective request timeout is `min(request-timeout, remaining max-total-timeout)`
 - if no positive budget remains, the request is not started
-- background refresh uses the configured per-attempt timeouts and never borrows time from a business request
+- background refresh uses the same configured `connect-timeout` and `request-timeout` as per-attempt caps and never borrows time from a business request
 
 ## Config Model
 
@@ -335,7 +339,11 @@ Business-request transport settings remain top-level extension settings:
 - `retry-initial-delay`
 - `retry-max-delay`
 
-These settings continue to govern the resource-server call path and the outer retry loop owned by `HttpExtensionServiceClient`.
+Ownership rules:
+
+- `connect-timeout` and `request-timeout` are the shared per-attempt HTTP timeout settings for both resource-server calls and token-endpoint calls
+- `max-total-timeout` is the outer budget for one business external-call operation, including any foreground token acquisition and one allowed `401` replay
+- `max-retries`, `retry-initial-delay`, and `retry-max-delay` are owned only by the outer business-request retry loop in `HttpExtensionServiceClient`
 
 Auth lifecycle retries are configured separately under `auth.oauth.token-manager` using `AuthenticationTokenManagerConfig`:
 
@@ -344,7 +352,7 @@ Auth lifecycle retries are configured separately under `auth.oauth.token-manager
 - `min-retry-interval`
 - optional exponential-backoff settings
 
-This split is intentional: extension-level retries govern replay of business calls to the resource server, while token-manager retries govern acquisition and refresh of OAuth tokens.
+This split is intentional: extension-level timeout settings provide the per-attempt HTTP caps used by both destinations, extension-level retry settings govern replay of business calls to the resource server, and token-manager retries govern acquisition and refresh of OAuth tokens.
 
 ### Example config
 
@@ -435,9 +443,9 @@ Accepted tradeoff:
 
 ### One outer attempt
 
-For one outer external-call attempt:
+For one outer external-call attempt within a single external-call operation:
 
-1. `HttpExtensionServiceClient` computes the absolute deadline from `max-total-timeout`.
+1. `HttpExtensionServiceClient` reuses the operation's absolute deadline, computed once from `max-total-timeout` before the first outer attempt, and computes the remaining budget for this attempt.
 2. It asks the auth provider to prepare auth for that deadline.
 3. It sends the request to `/api/v1/external-call` with the existing `X-Daml-External-*` headers unchanged, the auth header from `PreparedAuth`, and effective timeouts clamped to the remaining deadline.
 4. If the response is not `401`, that response is the outcome of the outer attempt.
@@ -597,6 +605,7 @@ Semantics:
 - `localErrors` are fatal in every mode except `off`
 - `remoteErrors` are fatal only in `strict-remote`
 - `remoteWarnings` never block startup
+- Remote validation failures produced by clients always populate `remoteErrors`. In `best-effort-remote`, `ParticipantNode` downgrades those reported errors only when interpreting the aggregated report; clients should not rewrite them into `remoteWarnings` based on mode.
 
 API rules:
 
