@@ -109,6 +109,8 @@ Add a new package under `community/participant/src/main/scala/com/digitalasset/c
 - validate local auth configuration and remote auth reachability according to the global validation mode
 - own auth-side lifecycle resources so they can be closed together with the extension manager
 
+Validation reporting stays under `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/` because it is an extension-manager boundary type, not an auth-internal type.
+
 Proposed logical types:
 
 - `ExternalCallAuthConfig`
@@ -661,6 +663,8 @@ Request-id rule:
 
 `HttpExtensionServiceClient.validateConfiguration()` currently performs a best-effort POST to `/api/v1/external-call` using `_health` as the function id and treats any HTTP response as evidence that the service is reachable.
 
+The current `ExtensionValidationResult.Valid | Invalid(errors)` shape is too weak for the final design because it cannot distinguish local failures from remote failures or fatal findings from tolerated findings.
+
 ### Proposed behavior
 
 The current startup-validation wiring is incomplete:
@@ -681,6 +685,37 @@ Wiring rule:
 - before the participant exposes services, `ParticipantNode` invokes `validateAllExtensions()`
 - `ExtensionServiceManager` executes the checks implied by `validation-mode`
 - startup failure is derived solely from `validation-mode`, not from a second fail/ignore boolean
+
+Validation result shape:
+
+- replace `ExtensionValidationResult.Valid | Invalid(errors)` with a structured per-extension report type
+- define that type in `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionService.scala`
+
+Concrete shape:
+
+- `final case class ExtensionValidationReport(`
+- `  extensionId: String,`
+- `  localErrors: Seq[String],`
+- `  remoteErrors: Seq[String],`
+- `  remoteWarnings: Seq[String],`
+- `)`
+
+Derived semantics:
+
+- `localErrors`
+  - fatal in every mode except `off`
+- `remoteErrors`
+  - fatal only in `strict-remote`
+  - reported as warnings in `best-effort-remote`
+- `remoteWarnings`
+  - non-fatal diagnostics that never block startup
+
+API rule:
+
+- `ExtensionServiceClient.validateConfiguration(validationMode)` returns `ExtensionValidationReport`
+- `ExtensionServiceManager.validateAllExtensions()` returns `Map[String, ExtensionValidationReport]`
+- startup success/failure is computed by `ExtensionServiceManager` from those reports and the global `validation-mode`
+- the validation report type does not itself encode startup success/failure
 
 Fatal local-validation rule:
 
@@ -824,7 +859,8 @@ Therefore:
   - integrate auth provider and structured failure classification
   - clamp request timeouts to the remaining outer deadline
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionService.scala`
-  - expand internal error taxonomy if needed
+  - replace `ExtensionValidationResult` with `ExtensionValidationReport`
+  - update `ExtensionServiceClient.validateConfiguration(...)` to return the structured validation report
 
 ### New files likely to be added
 
