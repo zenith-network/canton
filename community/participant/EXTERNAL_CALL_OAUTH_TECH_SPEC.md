@@ -156,10 +156,12 @@ Contract rules:
 - `prepareRequest` performs any foreground token acquisition required for the current outer attempt
 - `prepareRequest` receives the absolute outer deadline and is responsible for clamping token-endpoint work to that deadline
 - `PreparedAuth.tokenUsed` is the exact token attached to the outgoing resource request and is the value used for token-conditional invalidation
-- `PreparedAuth.tokenEndpointRequestId` records the last token-endpoint HTTP request id involved in preparing that auth state for the current outer attempt
+- `PreparedAuth.tokenEndpointRequestId` records the last participant-generated token-endpoint request id involved in preparing that auth state for the current outer attempt
 - `AuthResponseContext` carries the subset of resource-response metadata the auth layer is allowed to inspect
-- `HttpExtensionServiceClient` constructs `AuthResponseContext` from the concrete resource-server `HttpResponse` before releasing that response object
+- `HttpExtensionServiceClient` generates the resource-server request id locally before send, places it in the configured request-id header, and copies that same participant-generated value into `AuthResponseContext.resourceRequestId`
+- `HttpExtensionServiceClient` constructs `AuthResponseContext` from the concrete resource-server `HttpResponse` plus that locally generated resource request id before releasing the response object
 - `AuthResponseContext.wwwAuthenticate` is populated from the first `WWW-Authenticate` response header when present
+- request ids in this design are participant-generated outbound correlation ids; servers may echo them, but the protocol does not depend on any response-header request-id contract
 - `handleResponse` is pure from the perspective of business retry ownership: it may request one auth-local replay, but it does not advance the outer retry counter
 - `handleResponse` may return `ReplayOnceWithFreshAuth` at most once per outer attempt
 
@@ -242,7 +244,7 @@ Shared in-flight acquisition rule:
 
 - talks only to the configured token endpoint
 - uses its own TLS settings
-- generates a request id for each token-endpoint HTTP interaction for logging and error propagation
+- generates a participant-local correlation id for each token-endpoint HTTP interaction, sends it in the configured request-id header, and uses that same id for logging and error propagation
 - receives an absolute deadline from the outer external-call attempt for foreground acquisition
 - returns `OAuthAccessTokenWithExpiry`
 - never logs secret-bearing inputs or outputs
@@ -543,7 +545,7 @@ For one outer external-call attempt:
 3. `prepareRequest` returns `PreparedAuth`.
 4. `HttpExtensionServiceClient` sends the request to `/api/v1/external-call` with the existing business headers unchanged, the auth header from `PreparedAuth`, and the per-attempt timeout clamped to the remaining outer budget.
 5. If the response is not `401`, that response is the outcome of the outer attempt.
-6. If the response is `401`, `HttpExtensionServiceClient` extracts `statusCode`, `requestId`, and the first `WWW-Authenticate` header from the concrete `HttpResponse`, builds `AuthResponseContext`, and calls `ExternalCallAuthProvider.handleResponse(responseContext, preparedAuth, deadline)`.
+6. If the response is `401`, `HttpExtensionServiceClient` reuses the locally generated outbound resource request id for that HTTP interaction, extracts `statusCode` and the first `WWW-Authenticate` header from the concrete `HttpResponse`, builds `AuthResponseContext`, and calls `ExternalCallAuthProvider.handleResponse(responseContext, preparedAuth, deadline)`.
 7. `handleResponse` may perform one auth-local replay inside the same outer attempt by returning `ReplayOnceWithFreshAuth(nextPreparedAuth)`.
 8. The final response produced by that auth-local replay, or the original non-`401` response, becomes the outcome of the outer attempt.
 9. The outer retry loop then classifies that outer-attempt outcome as success, retryable failure, or terminal failure.
@@ -701,7 +703,7 @@ The flattening rule is:
 
 Request-id rule:
 
-- the boundary `requestId` is the request id from the last HTTP interaction that determined the final failure returned for that outer attempt
+- the boundary `requestId` is the participant-generated outbound correlation id from the last HTTP interaction that determined the final failure returned for that outer attempt
 - if the final failure is a token-endpoint HTTP failure before any replay request is sent, return `PreparedAuth.tokenEndpointRequestId` when present
 - if the final failure is the initial resource-server response and no auth-local replay is performed, return the initial resource-server request id
 - if a `401` triggers token acquisition and then a replay request is sent, the replay request id supersedes both the original `401` request id and `PreparedAuth.tokenEndpointRequestId`
