@@ -709,6 +709,38 @@ Global validation modes:
   - fail startup on any local validation error
   - fail startup if remote auth validation fails
 
+Mixed-extension semantics:
+
+- one global `validation-mode` applies to every configured extension
+- extensions with `auth.mode = none` run transport/config validation only
+- extensions with `auth.mode = oauth` run transport/config validation plus OAuth-specific validation
+- in remote modes, `auth.mode = none` performs only the resource-server transport probe
+- in remote modes, `auth.mode = oauth` performs token acquisition plus the resource-server transport probe
+
+Startup validation algorithm:
+
+1. Sort configured extensions by extension id.
+2. Run local validation for every extension and collect all local results.
+3. For any extension that failed local validation, record the local errors and skip remote validation for that extension.
+4. For locally valid extensions, run the remote checks required by the global `validation-mode`.
+5. Aggregate results for all extensions into one deterministic startup-validation report keyed by extension id.
+
+Startup outcome rule:
+
+- `off`
+  - perform no validation
+  - produce no startup-validation report
+- `local`
+  - startup succeeds only if every extension passes local validation
+  - startup failure reports all local validation failures across the extension set
+- `best-effort-remote`
+  - startup succeeds only if every extension passes local validation
+  - remote validation failures are aggregated and logged after validation completes
+  - startup continues even if one or more extensions fail remote validation
+- `strict-remote`
+  - startup succeeds only if every extension passes local validation and every locally valid extension passes remote validation
+  - startup failure reports all local and remote validation failures across the extension set
+
 Remote validation must not send a synthetic business request through `/api/v1/external-call`.
 
 Final remote-probe rule:

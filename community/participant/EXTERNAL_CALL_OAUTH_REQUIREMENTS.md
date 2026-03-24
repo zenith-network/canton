@@ -308,6 +308,13 @@ Failure rule:
 - local validation failures include malformed config, mutually inconsistent config, unreadable private keys, unreadable certificate or trust files, and invalid TLS material
 - only remote validation failures are tolerated in best-effort remote mode
 
+Mixed-set and aggregation rule:
+
+- one global validation mode applies to the full configured extension set
+- unauthenticated extensions and OAuth extensions are both validated under that mode, with per-extension checks determined by `auth.mode`
+- validation must not fail fast on the first broken extension
+- startup validation must evaluate the full extension set, aggregate errors deterministically by extension id, and then apply the mode's startup success/failure rule to that aggregated result
+
 The default behavior should avoid making the participant startup path more brittle than the current extension validation model unless the operator explicitly opts into stricter startup enforcement.
 
 ### R23. Clear Failure Classification
