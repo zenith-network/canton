@@ -870,6 +870,21 @@ Therefore:
 - the implementation does not need a compatibility alias layer for static bearer tokens
 - the documented production path is simply OAuth with `private_key_jwt` over standard TLS
 
+## Repo Migration Checklist
+
+The lack of a product compatibility layer does not remove the need for an internal repo migration. The implementation must update all repo-internal call sites that still assume the legacy config shape.
+
+Required migration steps:
+
+- replace `ExtensionServiceConfig` and related config ADTs with the final endpoint/auth model
+- update `community/app-base/src/main/scala/com/digitalasset/canton/config/CantonConfig.scala` readers and writers for the new config structure
+- update participant test fixtures and helpers that construct `ExtensionServiceConfig` directly
+- update external-call integration tests to build the new endpoint/auth config shape
+- update config snippets, sample configs, and documentation-backed test resources that use legacy extension config fields
+- replace `EngineExtensionsConfig.validateExtensionsOnStartup` / `failOnExtensionValidationError` with the final `validationMode` field throughout config parsing and tests
+- replace any tests that assume `_health`-based validation with tests for the structured validation report and transport-only probing
+- remove legacy static-token and `tlsInsecure` assumptions from external-call-specific tests
+
 ## Code Impact
 
 ### Existing files likely to change
