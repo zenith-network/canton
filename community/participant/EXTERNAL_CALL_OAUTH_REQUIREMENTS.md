@@ -19,7 +19,6 @@ This is insufficient for production use because it does not provide:
 - invalidation and rotation handling
 - audience and scope management
 - strong client authentication
-- sender-constrained or proof-of-possession style authentication
 
 It is also out of line with the rest of the codebase, which already has established patterns for JWT validation, issuer and JWKS handling, audience and scope enforcement, TLS-based security, and managed token lifecycles.
 
@@ -29,6 +28,7 @@ It is also out of line with the rest of the codebase, which already has establis
 - Align configuration and runtime behavior with existing Canton auth and JWT patterns.
 - Reuse existing lifecycle-management patterns for token caching, refresh, invalidation, retry, and backoff.
 - Support production-grade machine authentication without inventing a parallel auth model specific to external calls.
+- Establish a single canonical production path: OAuth with JWT-assertion-based client authentication over standard TLS.
 - Keep the external call business protocol unchanged unless an auth requirement makes a change unavoidable.
 
 ## Non-Goals
@@ -38,6 +38,7 @@ It is also out of line with the rest of the codebase, which already has establis
 - Redesigning the external call payload protocol or function contract.
 - Replacing the existing sequencer authentication protocol.
 - Introducing extension-service-specific business authorization semantics into Canton.
+- Supporting sender-constrained mechanisms such as mTLS-bound access tokens.
 
 ## Reuse-First Design Principles
 
@@ -58,9 +59,9 @@ The requirements below assume reuse of the following existing codebase patterns 
 - `CachedJwtVerifierLoader` for JWKS retrieval and caching when verifier loading is needed.
 - declarative identity-provider configuration semantics already used by the ledger API: issuer, JWKS URL, and audience.
 - `AuthenticationTokenManagerConfig` and the lifecycle semantics embodied by `AuthenticationTokenProvider` and `AuthenticationTokenManager` for token acquisition, caching, pre-expiry refresh, retry, backoff, and invalidation patterns.
-- existing TLS client/server config patterns for certificate handling and mTLS.
+- existing TLS client/server config patterns for certificate handling and trust configuration.
 - existing JWT signing and key loading helpers such as `JwtSigner` and `KeyUtils`.
-- existing Canton crypto usage patterns for private-key-backed proof-of-possession when a JWT assertion or signed challenge is required.
+- existing Canton crypto usage patterns for private-key-backed JWT assertions where required.
 
 These requirements do not assume that the existing inbound JWT verifier stack is directly reusable for outbound token acquisition, or that sequencer-specific token acquisition classes are directly reusable for OAuth. Where reuse is only conceptual rather than literal, the implementation must reuse semantics and operational patterns rather than force-fit the exact existing classes or storage models.
 
@@ -145,30 +146,28 @@ In practice:
 
 OAuth token acquisition must support a production-grade client authentication method that aligns with patterns already present in the codebase.
 
-The preferred existing-alignment options are:
+The production client-authentication method for this design is:
 
 - JWT assertion based client authentication using existing JWT signing and key-loading infrastructure
-- mTLS using existing TLS client certificate patterns
 
 The design must not require a long-lived shared secret in plain configuration as the only production authentication method.
 
 ### R8. No New Ad Hoc Key Handling
 
-If JWT assertions or proof-of-possession are required, private key loading, signing, and rotation must reuse existing key and crypto handling patterns.
+If JWT assertions are required, private key loading, signing, and rotation must reuse existing key and crypto handling patterns.
 
 The implementation must not introduce a separate, extension-specific key format or signing stack unless an external standard requires it and existing utilities cannot support it.
 
-### R9. Sender-Constrained Authentication Compatibility
+### R9. Sender-Constrained Mechanisms Are Out Of Scope
 
-The auth abstraction must be compatible with sender-constrained authentication where required by the upstream service.
-
-This includes the ability to support:
+The final design does not need to support sender-constrained mechanisms such as:
 
 - mTLS-bound access tokens
-- JWT assertion based client authentication
-- other proof-of-possession style mechanisms if they can be expressed cleanly through existing crypto and TLS patterns
+- other proof-of-possession style mechanisms beyond JWT assertion based client authentication
 
-The initial implementation does not need to implement every sender-constrained mechanism immediately, but the abstraction must not lock the codebase into bearer-only semantics again.
+The accepted tradeoff is that issued bearer access tokens can be replayed until expiry if they are exfiltrated.
+
+This is an explicit scope decision in favor of a simpler and more canonical production auth contract.
 
 ## Token Lifecycle Requirements
 
@@ -208,7 +207,7 @@ This should follow the same single-refresh / shared-promise pattern used by `Aut
 The implementation must support rotation of:
 
 - signing keys used for client authentication
-- certificates used for mTLS
+- TLS certificates and trust material used for the token endpoint or resource server
 - authorization-server keys relevant to any local verification or discovery logic
 
 Where local verification or trust material lookup is needed, existing JWKS and certificate-loading patterns must be reused.
@@ -222,7 +221,7 @@ External call auth must be configured as part of the extension service definitio
 The auth configuration should be structured so that:
 
 - an extension can be unauthenticated
-- different extensions can use different OAuth providers or client auth methods
+- different extensions can use different OAuth providers, client identities, audiences, or scopes
 - the HTTP client receives a resolved auth strategy rather than raw auth fields
 
 ### R16. Configuration Must Preserve Existing TLS Structure
@@ -273,7 +272,7 @@ Auth metadata must not become part of the business semantics of the external cal
 In particular:
 
 - submission and validation executions must remain equivalent from the external service's business perspective
-- token renewal, timestamps, or sender-constrained proof material must not be allowed to affect the external call result in a way that breaks determinism
+- token renewal, timestamps, or JWT assertion material must not be allowed to affect the external call result in a way that breaks determinism
 
 This is a hard requirement because external calls are re-executed during validation.
 
@@ -431,7 +430,7 @@ If OAuth is enabled, it must be because the configuration explicitly selected it
 The implementation should resolve the following without violating the reuse-first principles above:
 
 1. Whether outbound OAuth config should reference an existing identity-provider definition, or only reuse its semantics.
-2. Which production client-auth method should be implemented first if not all are delivered at once.
+2. Which key formats and algorithms should be supported for JWT-assertion-based client authentication.
 3. Whether token-endpoint retry and external-call retry can share common retry primitives without coupling their responsibilities.
 4. How far auth-aware startup validation should go without making startup depend on a business endpoint.
 
@@ -443,5 +442,6 @@ The requirements in this document are satisfied when all of the following are tr
 - the new auth flow uses OAuth-compatible service authentication
 - token lifecycle management follows the same operational model already used elsewhere in the codebase
 - JWT, audience, scope, issuer, TLS, and key-handling semantics align with existing Canton patterns
+- the documented production path is OAuth with JWT-assertion-based client authentication over TLS
 - the implementation introduces no extension-specific auth model unless required by an external protocol constraint
 - the resulting design is documented and testable without special-case operational knowledge
