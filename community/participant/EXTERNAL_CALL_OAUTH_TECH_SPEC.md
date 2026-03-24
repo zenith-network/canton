@@ -276,9 +276,10 @@ Validation responsibility is split as follows:
 
 Foreground timeout rule:
 
-- every foreground HTTP connect attempt is bounded by `connect-timeout`
+- every foreground HTTP connect attempt uses an effective connect timeout of `min(connect-timeout, remaining max-total-timeout budget)`
 - every foreground token-endpoint HTTP attempt must clamp its timeout to `min(request-timeout, remaining max-total-timeout budget)`
 - if no budget remains, token acquisition fails immediately and the business request is not sent
+- if the effective connect timeout is non-positive, the connect attempt is not started
 
 Background timeout rule:
 
@@ -622,10 +623,11 @@ This means foreground token acquisition needs a deadline-aware API. The auth lay
 Final timeout rule:
 
 - `HttpExtensionServiceClient` computes one absolute deadline from `max-total-timeout`
-- every foreground HTTP connect attempt is bounded by `connect-timeout` and can occur only while outer budget remains
+- every foreground HTTP connect attempt uses an effective connect timeout of `min(connect-timeout, remaining outer budget)` and can occur only while that effective timeout is positive
 - every foreground token-endpoint call clamps its timeout to the remaining budget
 - every resource-server call clamps its timeout to the remaining budget
 - neither side may issue a request once the remaining budget is non-positive
+- the implementation must enforce the outer deadline during connect time as well as request time; keeping a longer client-level connect timeout without additional deadline enforcement is not sufficient
 - background refresh is excluded from that outer deadline because it is not part of a business request, but it still uses the configured per-attempt timeout and token-manager retry limits
 
 ## Determinism
@@ -932,7 +934,7 @@ Required migration steps:
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/HttpExtensionServiceClient.scala`
   - remove token lifecycle logic
   - integrate auth provider and structured failure classification
-  - clamp request timeouts to the remaining outer deadline
+  - clamp effective connect timeout and request timeout to the remaining outer deadline
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionService.scala`
   - replace `ExtensionValidationResult` with `ExtensionValidationReport`
   - update `ExtensionServiceClient.validateConfiguration(...)` to return the structured validation report
