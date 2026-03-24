@@ -190,6 +190,13 @@ Instead, each business-request attempt should:
 3. let the auth provider inspect the response status and headers for invalidation
 4. let the existing retry loop decide whether another business-request attempt is allowed
 
+Structural refactor rule:
+
+- because both `prepareRequest` and `handleResponse` are `FutureUnlessShutdown` operations, the outer retry loop in `HttpExtensionServiceClient` must be rewritten around async `FutureUnlessShutdown` composition
+- wrapping one blocking retry loop in a single outer future is not sufficient for the final design
+- retry delays must be scheduled without `Threading.sleep`
+- the actual HTTP send may remain blocking internally or move to `sendAsync`, but the outer attempt orchestration must become async so auth preparation, `401` replay handling, and retry accounting compose correctly
+
 ### Token lifecycle manager
 
 Add an OAuth-specific access-token manager that reuses the `AuthenticationTokenManager` state machine and config semantics:
@@ -935,7 +942,8 @@ Required migration steps:
   - own auth-provider lifecycle and validation execution
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/HttpExtensionServiceClient.scala`
   - remove token lifecycle logic
-  - integrate auth provider and structured failure classification
+  - rewrite the outer retry loop around async `FutureUnlessShutdown` composition
+  - integrate auth provider and structured failure classification into that async control flow
   - clamp effective connect timeout and request timeout to the remaining outer deadline
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionService.scala`
   - replace `ExtensionValidationResult` with `ExtensionValidationReport`
