@@ -74,7 +74,7 @@ The current codebase already has the pieces this design should align with:
 - token lifecycle semantics in `AuthenticationTokenManager`
 - token acquisition retry/backoff settings in `AuthenticationTokenManagerConfig`
 - JWT signing helpers in `com.daml.jwt.JwtSigner` and `KeyUtils`
-- TLS client certificate loading semantics through existing `TlsClientConfig` usage in `ClientChannelBuilder`
+- TLS trust configuration semantics through existing `TlsClientConfig` usage in `ClientChannelBuilder`
 
 ### Important constraint from current code
 
@@ -113,7 +113,6 @@ Proposed logical types:
 - `ExternalCallAuthConfig`
 - `ExternalCallAuthProvider`
 - `NoAuthProvider`
-- `StaticBearerTokenProvider` for migration only
 - `OAuthExternalCallAuthProvider`
 - `OAuthAccessTokenManager`
 - `OAuthTokenClient`
@@ -205,9 +204,6 @@ Proposed auth modes:
 
 - `none`
 - `oauth`
-- `static-bearer` for a temporary compatibility window only
-
-`jwt` and `jwtFile` should stop being the primary auth interface. During the migration window they can remain as deprecated aliases for `static-bearer`, but mixed config must be rejected.
 
 Clarification:
 
@@ -255,7 +251,6 @@ extensions = {
           enabled = true
           trust-collection-file = "/etc/canton/issuer-ca.pem"
         }
-        startup-validation = local
       }
     }
 
@@ -281,7 +276,7 @@ The current `useTls` and `tlsInsecure` booleans are too weak for OAuth-enabled d
 - they cannot express different trust roots for the resource server and token endpoint
 - `ExtensionServiceManager` currently applies insecure TLS globally if any extension enables it
 
-The design should move toward existing `TlsClientConfig` semantics for both destinations. The current boolean fields can be retained only as a deprecated compatibility layer.
+The design should replace them with existing `TlsClientConfig`-style semantics for both destinations rather than carry forward the legacy external-call fields.
 
 ## OAuth Client Authentication
 
@@ -331,7 +326,6 @@ For one external-call attempt:
 2. It asks the auth provider to decorate the resource-server request.
 3. The auth provider may:
    - return immediately for `none`
-   - return a static bearer token for the migration mode
    - synchronously or asynchronously acquire a cached OAuth token
 4. `HttpExtensionServiceClient` sends the request to `/api/v1/external-call` with the existing business headers unchanged.
 5. Response classification happens in two layers:
@@ -343,6 +337,7 @@ For one external-call attempt:
 The invalidation policy should be explicit:
 
 - invalidate cached OAuth token on `401 Unauthorized` from the resource server
+- replay the same business request once with a freshly acquired token, subject to the existing outer timeout budget
 - do not invalidate on `403`, `404`, `429`, `5xx`, timeouts, or transport failures
 - record the `WWW-Authenticate` header when present for debugging, but do not require it for invalidation
 
@@ -405,7 +400,9 @@ This keeps the external-call protocol stable while satisfying the requirement fo
 
 ### Proposed behavior
 
-For OAuth-enabled extensions, validation should become mode-driven:
+For OAuth-enabled extensions, validation should remain globally controlled, consistent with the current extension validation model in `EngineExtensionsConfig`.
+
+Recommended global validation modes:
 
 - `local`
   - validate config completeness
@@ -417,12 +414,12 @@ For OAuth-enabled extensions, validation should become mode-driven:
   - do local validation
   - attempt token acquisition
   - attempt the current `_health` resource-server reachability call
-  - report failures but do not fail startup unless existing startup settings already say to fail
+  - report failures but do not fail startup unless existing global startup settings already say to fail
 - `strict-remote`
   - same checks as `best-effort-remote`
   - startup fails if remote auth validation fails
 
-This preserves today's non-brittle startup behavior by default while allowing opt-in fail-closed behavior.
+This keeps the validation control point aligned with the current global extension validation structure instead of introducing per-extension validation policy.
 
 ## Observability
 
@@ -467,43 +464,22 @@ Recommended first metrics:
 - token cache hit/miss count
 - auth latency timer
 
-## Migration Plan
+## Rollout Assumption
 
-### Compatibility window
+This design assumes there are no existing external-call users to preserve.
 
-Release N:
+Therefore:
 
-- introduce explicit auth mode config
-- keep `jwt` and `jwtFile` only as deprecated aliases to `static-bearer`
-- reject any config that mixes legacy static-token fields with the new `auth` block
-
-Release N+1 or N+2:
-
-- remove `jwt` and `jwtFile`
-- keep only `auth.mode = none | oauth`
-
-### Migration path for existing users
-
-Current:
-
-- `jwt = "..."`
-- `jwtFile = "/path/token.txt"`
-
-Target:
-
-- `auth.mode = oauth`
-- `auth.oauth.{issuer, token-endpoint, target-audience, target-scope, client-authentication, token-manager}`
-
-The documentation after migration should clearly state that OAuth is the production path and static bearer tokens are transitional only.
+- the final config model can replace the current `host` / `port` / `useTls` / `tlsInsecure` / `jwt` / `jwtFile` shape directly
+- the implementation does not need a compatibility alias layer for static bearer tokens
+- the documented production path is simply OAuth with `private_key_jwt` over standard TLS
 
 ## Code Impact
 
 ### Existing files likely to change
 
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/config/ExtensionServiceConfig.scala`
-  - add explicit auth config
-  - add token-endpoint config
-  - deprecate `jwt` and `jwtFile`
+  - replace the legacy transport/auth fields with an explicit endpoint and auth config model
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionServiceManager.scala`
   - stop relying on one globally shared `HttpClient` for all auth/TLS cases
   - instantiate resolved auth providers
@@ -549,7 +525,7 @@ Recommended additions:
 - unauthenticated external calls still work under `auth.mode = none`
 - OAuth-protected call succeeds end to end
 - expired token refreshes successfully
-- `401` invalidates token and a subsequent retry or call recovers
+- `401` invalidates token and the same business request is replayed once with a fresh token
 - submission and validation both succeed under the same OAuth config
 - signing key rotation
 - resource-server or token-endpoint certificate rotation
@@ -561,22 +537,13 @@ The current `MockExternalCallServer` should either:
 
 The second option is cleaner because it keeps the resource-server protocol mock separate from OAuth token issuance.
 
-## Open Questions
+## Settled Design Decisions
 
-1. Should outbound OAuth reuse only the semantics of ledger identity-provider config, or should an extension auth block be able to reference a named identity-provider definition directly?
-   Current recommendation: reuse semantics only in v1. The storage and lifecycle models are different enough that a direct reference risks becoming misleading.
+The following design choices are settled for this draft:
 
-2. Should a `401` trigger one immediate replay of the same business request after invalidation, or should the participant only invalidate and require recovery on the next external-call attempt?
-   This affects retry semantics and should be decided explicitly.
-
-3. Should the resource-server config move fully to a `TlsClientConfig`-style endpoint block in the same change, or should the first OAuth change keep legacy `host` / `port` / `useTls` / `tlsInsecure` fields and only add a richer token-endpoint TLS block?
-   The first option is cleaner. The second option is a smaller diff but leaves the transport model split.
-
-4. What key formats and algorithms are in scope for client assertions?
-   The easiest codebase fit is RSA private keys in the format already supported by `KeyUtils.readRSAPrivateKeyFromDer`. Whether PEM and EC keys should be first-wave support is still open.
-
-5. If the token response lacks usable expiry metadata, should the participant reject the provider configuration or accept the token but bypass caching?
-   Rejecting it is safer. Bypassing caching is more permissive but weakens the lifecycle model.
-
-6. Should auth validation mode live inside each extension config or in the existing global `EngineExtensionsConfig` startup-validation controls?
-   Per-extension is more precise. Global is simpler and closer to today's structure.
+1. Outbound OAuth reuses ledger identity-provider semantics only; it does not reference named identity-provider definitions directly.
+2. A `401` invalidates cached auth state and causes the same business request to be replayed once with a fresh token, subject to the existing outer timeout budget.
+3. The final config model replaces the legacy resource-server transport fields with a `TlsClientConfig`-style endpoint block.
+4. `private_key_jwt` client authentication supports RSA keys in DER/PKCS8 format.
+5. The token response must provide usable expiry metadata. Providers that do not provide it are rejected.
+6. Auth validation mode is configured globally, aligned with the existing `EngineExtensionsConfig` startup-validation controls.
