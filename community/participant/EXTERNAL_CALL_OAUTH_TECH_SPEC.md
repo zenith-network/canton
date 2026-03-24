@@ -2,8 +2,7 @@
 
 ## Purpose and Baseline
 
-This document defines a simplified first implementation of OAuth-based service-to-service
-authentication for participant external calls.
+This document defines OAuth-based service-to-service authentication for participant external calls.
 
 The goal is to add OAuth without changing the Daml external-call business protocol.
 
@@ -43,14 +42,14 @@ Current implementation constraints:
 Keep `HttpExtensionServiceClient` as the sole owner of request orchestration, deadlines, retry
 integration, and the single auth-local `401` replay.
 
-OAuth support stays inside this existing seam. A small private helper for cached token state is
-acceptable, but no general auth-provider interface or separate auth subsystem is introduced for
-`external_call` in the first implementation.
+OAuth support stays inside this existing seam. A small private helper for cached token state may
+be used, but no general auth-provider interface or separate auth subsystem is introduced for
+`external_call`.
 
 `ExtensionServiceManager` continues to create one client per configured extension, and
 `ExtensionServiceExternalCallHandler` remains a thin boundary mapper.
 
-No background refresh task is introduced in the first implementation.
+No background refresh task is introduced.
 
 Runtime HTTP client reuse is an implementation detail, but different TLS settings must not be
 collapsed into one shared trust configuration.
@@ -89,7 +88,7 @@ Rules:
 
 ### Token Acquisition and Caching
 
-The first implementation uses simple on-demand token caching:
+OAuth uses simple on-demand token caching:
 
 - a cached access token may be reused until expiry
 - there is no proactive refresh and no background work
@@ -111,13 +110,13 @@ Client assertion rules:
 - emit `kid` when configured
 - claims are `iss = client-id`, `sub = client-id`, `aud = <token-endpoint URI>`, `iat = now`, `exp = now + 30s`, and `jti = <fresh random identifier>`
 - assertions are one-use only and are never logged or persisted
-- RSA DER/PKCS8 is the only supported signing-key format in the first implementation
+- RSA DER/PKCS8 is the supported signing-key format
 
 Key and trust material:
 
-- the first implementation may load signing-key and trust material during local validation and client construction rather than re-reading files on every token request
+- signing-key and trust material are loaded during local validation and client construction rather than re-reading files on every token request
 - rotation therefore takes effect on participant restart
-- hot reload of OAuth key material is out of scope for the first implementation
+- hot reload of OAuth key material is out of scope
 
 Token-endpoint failures use the same retry budget as resource requests. There is no second retry
 policy for OAuth. HTTP `408`, `429`, `500`, `502`, `503`, and `504`, plus transient connect,
@@ -150,7 +149,7 @@ Token-endpoint URI:
 Global extension settings:
 
 - keep the existing `EngineExtensionsConfig` knobs: `validateExtensionsOnStartup`, `failOnExtensionValidationError`, and `echoMode`
-- do not introduce a separate `validation-mode` enum in the first implementation
+- do not introduce a separate `validation-mode` enum
 
 ### Example Config
 
@@ -224,7 +223,7 @@ Contract:
 - when `validateExtensionsOnStartup = false`, validation is skipped and `validateAllExtensions()` returns `Map.empty`
 - when `validateExtensionsOnStartup = true`, validation runs independently per configured extension
 - validation covers malformed or inconsistent config, missing required OAuth fields, `auth.mode = oauth` without TLS, unreadable private-key files, unreadable or invalid trust material, and obviously invalid token-endpoint path or URI construction
-- validation does not perform token acquisition or remote HTTP calls in the first implementation
+- validation does not perform token acquisition or remote HTTP calls
 - if `failOnExtensionValidationError = true`, any `Invalid` result fails participant startup; otherwise failures are logged and startup continues
 - in `echoMode`, no HTTP or OAuth objects are constructed and all configured extensions validate as `Valid`
 
@@ -260,7 +259,7 @@ Logging:
 
 Metrics:
 
-- new OAuth-specific metrics are optional in the first implementation; they are not required to ship the feature
+- OAuth-specific metrics are optional; the feature does not depend on adding new metrics
 
 Tests:
 
