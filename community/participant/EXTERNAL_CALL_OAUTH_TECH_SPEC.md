@@ -127,7 +127,7 @@ Concrete auth-provider contract:
 
 - `prepareRequest(`
 - `  deadline: CantonTimestamp`
-- `)(implicit tc: TraceContext): FutureUnlessShutdown[Either[AuthPreparationFailure, PreparedAuth]]`
+- `)(implicit tc: TraceContext): FutureUnlessShutdown[Either[ExternalCallAuthFailure, PreparedAuth]]`
 - `handleResponse(`
 - `  responseContext: AuthResponseContext,`
 - `  preparedAuth: PreparedAuth,`
@@ -146,10 +146,21 @@ Concrete supporting types:
 - `  resourceRequestId: String,`
 - `  wwwAuthenticate: Option[String],`
 - `)`
+- `sealed trait ExternalCallAuthFailure {`
+- `  def message: String`
+- `  def requestId: Option[String]`
+- `}`
+- `final case class TokenEndpointHttpFailure(statusCode: Int, message: String, requestId: String) extends ExternalCallAuthFailure`
+- `final case class TokenEndpointTimeout(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
+- `final case class TokenEndpointIoFailure(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
+- `final case class MalformedTokenResponse(message: String, requestId: Option[String]) extends ExternalCallAuthFailure`
+- `final case class LocalAuthMaterialFailure(message: String) extends ExternalCallAuthFailure {`
+- `  override val requestId: Option[String] = None`
+- `}`
 - `sealed trait AuthResponseDecision`
 - `case object NoReplay extends AuthResponseDecision`
 - `final case class ReplayOnceWithFreshAuth(nextPreparedAuth: PreparedAuth) extends AuthResponseDecision`
-- `final case class FailAuth(authFailure: AuthPreparationFailure) extends AuthResponseDecision`
+- `final case class FailAuth(authFailure: ExternalCallAuthFailure) extends AuthResponseDecision`
 
 Contract rules:
 
@@ -157,6 +168,7 @@ Contract rules:
 - `prepareRequest` receives the absolute outer deadline and is responsible for clamping token-endpoint work to that deadline
 - `PreparedAuth.tokenUsed` is the exact token attached to the outgoing resource request and is the value used for token-conditional invalidation
 - `PreparedAuth.tokenEndpointRequestId` records the last participant-generated token-endpoint request id involved in preparing that auth state for the current outer attempt
+- `ExternalCallAuthFailure` is the auth-layer failure envelope used both before the first business request and during `401` recovery; it carries the failure class, message, and token-endpoint request id when a token-endpoint HTTP interaction had already been started
 - `AuthResponseContext` carries the subset of resource-response metadata the auth layer is allowed to inspect
 - `HttpExtensionServiceClient` generates the resource-server request id locally before send, places it in the configured request-id header, and copies that same participant-generated value into `AuthResponseContext.resourceRequestId`
 - `HttpExtensionServiceClient` constructs `AuthResponseContext` from the concrete resource-server `HttpResponse` plus that locally generated resource request id before releasing the response object
@@ -692,11 +704,11 @@ This keeps the external-call protocol stable while satisfying the requirement fo
 The flattening rule is:
 
 - token acquisition failure
-  - if the token endpoint returned an HTTP response, preserve that HTTP status code
-  - if token acquisition timed out before an HTTP response, including while waiting on a shared in-flight acquisition future, return `408`
-  - if token acquisition failed due to connect or I/O failure before an HTTP response, return `503`
-  - if token acquisition failed due to local signing-key reload, local auth-material failure, or other participant-side auth setup failure at call time, return `500`
-  - if token acquisition failed because the token response was malformed, omitted required fields, or returned an unsupported `token_type`, return `502`
+  - `TokenEndpointHttpFailure(statusCode, message, requestId)` preserves `statusCode`
+  - `TokenEndpointTimeout(message, requestId)`, including timeout while waiting on a shared in-flight acquisition future, maps to `408`
+  - `TokenEndpointIoFailure(message, requestId)` maps to `503`
+  - `LocalAuthMaterialFailure(message)` maps to `500`
+  - `MalformedTokenResponse(message, requestId)` maps to `502`
   - prefix the message with `OAuth token acquisition failed:`
 - token rejection by the resource server
   - after the auth-local replay is exhausted, return `401`
@@ -711,11 +723,12 @@ The flattening rule is:
 Request-id rule:
 
 - the boundary `requestId` is the participant-generated outbound correlation id from the last HTTP interaction that determined the final failure returned for that outer attempt
-- if the final failure is a token-endpoint HTTP failure before any replay request is sent, return `PreparedAuth.tokenEndpointRequestId` when present
+- `ExternalCallAuthFailure.requestId` is the participant-generated token-endpoint request id when a token-endpoint HTTP interaction had already started; otherwise it is `None`
+- if the final failure is an auth failure before any resource-server request is sent, return `authFailure.requestId`
 - if the final failure is the initial resource-server response and no auth-local replay is performed, return the initial resource-server request id
 - if a `401` triggers token acquisition and then a replay request is sent, the replay request id supersedes both the original `401` request id and `PreparedAuth.tokenEndpointRequestId`
-- if token acquisition after a `401` fails before any replay request is sent, return the token-endpoint request id when a token-endpoint HTTP request was sent
-- if token acquisition after a `401` fails before any token-endpoint HTTP request was sent, return the original `401` resource-server request id
+- if token acquisition after a `401` fails before any replay request is sent, return `authFailure.requestId` when it is defined
+- if token acquisition after a `401` fails before any replay request is sent and `authFailure.requestId` is `None`, return the original `401` resource-server request id
 - if the failure occurred before any HTTP request was sent, return `None`
 
 ## Validation
