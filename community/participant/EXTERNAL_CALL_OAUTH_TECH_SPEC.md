@@ -40,63 +40,30 @@ Current implementation constraints:
 
 ### Auth Boundary and Ownership
 
-Add a dedicated participant extension auth package and move all auth-specific behavior behind a provider boundary. The auth layer is responsible for resolving auth config into a concrete strategy, decorating outbound business requests with auth material, acquiring and caching auth state, refreshing and invalidating that state, validating local auth configuration and remote auth reachability, and owning auth-side lifecycle resources. Validation reporting stays at the extension-manager boundary rather than inside auth internals.
+Keep `HttpExtensionServiceClient` as the sole owner of request orchestration, deadlines, retry integration, and the single auth-local `401` replay. OAuth support lives behind a small helper boundary rather than a general auth-provider interface. The helpers are used only when `auth.mode = oauth`; `auth.mode = none` remains a straight-through request with no auth-specific objects.
 
-The design introduces `ExternalCallAuthConfig`, `ExternalCallAuthProvider`, `NoAuthProvider`, `OAuthExternalCallAuthProvider`, `OAuthAccessTokenManager`, `OAuthTokenClient`, and `PrivateKeyJwtConfig`.
+The design introduces `OAuthAccessTokenManager`, `OAuthTokenClient`, and `PrivateKeyJwtConfig`.
 
-Provider hot-path contract:
+Component responsibilities:
 
-```scala
-prepareRequest(
-  deadline: CantonTimestamp
-)(implicit tc: TraceContext)
-  : FutureUnlessShutdown[Either[ExternalCallAuthFailure, PreparedAuth]]
-
-handleResponse(
-  responseContext: AuthResponseContext,
-  preparedAuth: PreparedAuth,
-  deadline: CantonTimestamp
-)(implicit tc: TraceContext)
-  : FutureUnlessShutdown[AuthResponseDecision]
-```
-
-Supporting types:
-
-```scala
-final case class PreparedAuth(
-  authorizationHeader: Option[String],
-  tokenUsed: Option[String],
-  tokenEndpointRequestId: Option[String],
-)
-
-final case class AuthResponseContext(
-  statusCode: Int,
-  resourceRequestId: String,
-  wwwAuthenticate: Option[String],
-)
-
-sealed trait AuthResponseDecision
-case object NoReplay extends AuthResponseDecision
-final case class ReplayOnceWithFreshAuth(nextPreparedAuth: PreparedAuth) extends AuthResponseDecision
-final case class FailAuth(authFailure: ExternalCallAuthFailure) extends AuthResponseDecision
-```
+- `HttpExtensionServiceClient` resolves `auth.mode`, asks `OAuthAccessTokenManager` for a token when OAuth is enabled, injects `Authorization: Bearer <token>`, decides whether a resource-server `401` triggers one invalidate-and-replay cycle, and feeds the final outer-attempt outcome back into the existing retry loop
+- `OAuthAccessTokenManager` owns cached token state, shared in-flight acquisition, refresh behavior, and token-conditional invalidation
+- `OAuthTokenClient` talks only to the configured token endpoint, builds and sends the `client_credentials` request with `private_key_jwt`, parses the token response, and classifies token-endpoint failures
+- no auth-mode-polymorphic hot-path interface is introduced; `auth.mode = none` is handled as the absence of OAuth work rather than via a `NoAuthProvider`
 
 Rules:
 
-- `prepareRequest` performs any foreground token acquisition needed before the first resource-server request of the current outer attempt
-- `prepareRequest` receives the absolute outer deadline and must clamp token-endpoint work to that deadline
-- `PreparedAuth.tokenUsed` is the exact token attached to the outgoing request and is the value used for token-conditional invalidation
-- `PreparedAuth.tokenEndpointRequestId` records the last participant-generated token-endpoint request id involved in preparing auth for the current outer attempt
-- `AuthResponseContext` carries only the metadata the auth layer may inspect: status code, participant-generated resource request id, and the first `WWW-Authenticate` header when present
+- foreground token acquisition happens inside `HttpExtensionServiceClient` before the first resource-server request of the current outer attempt
+- `HttpExtensionServiceClient` passes the absolute outer deadline into foreground token acquisition and token-endpoint work must be clamped to that deadline
+- when OAuth is enabled, the rejected token tracked for conditional invalidation is the exact token attached to the outgoing `Authorization` header
 - request ids in this design are participant-generated outbound correlation ids; servers may echo them, but the protocol does not depend on a response-header request-id contract
-- `handleResponse` may invalidate cached auth state and invoke the same foreground-acquisition path used by `prepareRequest` to obtain fresh auth for one auth-local replay
 
 Lifecycle ownership:
 
-- `ExtensionServiceManager` owns auth providers, passes a `Clock` plus `isClosing` signal into `OAuthAccessTokenManager`, and closes auth providers from `onClosed()` so background refresh stops during shutdown
-- `ParticipantNode` passes its existing clock into the manager and registers the extension manager as a closeable so `onClosed()` always runs
+- `ParticipantNode` passes its existing clock into `ExtensionServiceManager`
+- `ExtensionServiceManager` owns extension clients; when OAuth is enabled for an extension, the corresponding `HttpExtensionServiceClient` owns the `OAuthAccessTokenManager` for that extension and passes it the clock plus shutdown signal it needs
 - resource-server and token-endpoint clients are built for the TLS and auth configuration they actually use; the design must not depend on one globally shared `HttpClient` across distinct TLS and auth cases
-- constructing `ExtensionServiceManager`, `ExtensionServiceClient`, auth providers, and their lightweight config wrappers must not perform fallible key loading, trust-material loading, or TLS-context construction; those failures must surface through explicit startup validation or structured runtime call failures rather than escaping construction
+- constructing `ExtensionServiceManager`, `HttpExtensionServiceClient`, and lightweight OAuth config wrappers must not perform fallible key loading, trust-material loading, or TLS-context construction; those failures must surface through explicit startup validation or structured runtime call failures rather than escaping construction
 
 ### Request Execution, Retries, and Deadlines
 
@@ -107,13 +74,14 @@ For one external-call operation, `HttpExtensionServiceClient` computes one absol
 One outer attempt is:
 
 1. Compute the remaining budget against the operation deadline.
-2. Ask the auth provider to prepare auth for that deadline.
-3. Send the request to `/api/v1/external-call` with the existing `X-Daml-External-*` headers unchanged, the auth header from `PreparedAuth`, and connect and request timeouts clamped to the remaining budget.
-4. If the response is not `401`, that response is the outcome of the outer attempt.
-5. If the response is `401`, build `AuthResponseContext` from the concrete `HttpResponse` and the participant-generated resource request id.
-6. Let `handleResponse` decide whether to fail auth or replay once with fresh auth.
-7. Treat the replay result, or the original non-`401` response, as the outcome of the outer attempt.
-8. Feed that outer-attempt outcome back into the existing retry loop.
+2. If `auth.mode = none`, skip auth work. If `auth.mode = oauth`, ask `OAuthAccessTokenManager` for a token for that deadline.
+3. Send the request to `/api/v1/external-call` with the existing `X-Daml-External-*` headers unchanged, and add `Authorization: Bearer <token>` when OAuth is enabled. Connect and request timeouts are clamped to the remaining budget.
+4. If the response is not `401`, or if `auth.mode = none`, that response is the outcome of the outer attempt.
+5. If the response is `401` under `auth.mode = oauth`, invalidate cached OAuth state only if the rejected token still matches the current cached token.
+6. Acquire a fresh token against the same outer deadline.
+7. If fresh token acquisition fails, fail the outer attempt with that auth failure.
+8. Otherwise replay the resource request once with the fresh token.
+9. Treat the replay result, or the original non-`401` response, as the outcome of the outer attempt and feed that outcome back into the existing retry loop.
 
 Runtime rules:
 
@@ -124,14 +92,14 @@ Runtime rules:
 - any retryable result produced after the replay is the final result of that outer attempt
 - if the outer loop retries after that result, that consumes one `maxRetries` slot
 - `401` is the only resource response that may trigger auth-specific recovery after a resource request has been sent
-- invalidate cached OAuth state on `401` only if the rejected token still matches the provider's current token
+- invalidate cached OAuth state on `401` only if the rejected token still matches the token manager's current token
 - do not invalidate on `403`, `404`, `429`, `5xx`, timeouts, or transport failures
 - record `WWW-Authenticate` when present for diagnostics, but do not depend on it for invalidation
 - after the single auth-local replay, `200` succeeds; `401`, `400`, `403`, and `404` are terminal; `408`, `429`, `500`, `502`, `503`, and `504` remain retryable outer-attempt outcomes; transport failures mapped to retryable statuses behave the same way
 - token-acquisition failures are classified from the structured auth failure, not from a later flattened HTTP status code
 - if no positive deadline budget remains, neither token acquisition nor a resource request is started
 
-Because both auth-provider calls are `FutureUnlessShutdown`, the outer retry loop must be rewritten around asynchronous `FutureUnlessShutdown` composition. Retry delays must not use `Threading.sleep`. The actual HTTP send may remain blocking internally or move to `sendAsync`, but attempt orchestration must be async.
+The outer retry loop remains owned by `HttpExtensionServiceClient`; the spec does not require a new auth-provider-driven async orchestration layer. If the implementation keeps the current blocking retry loop shape, token-endpoint work and the auth-local replay must still honor the same absolute operation deadline.
 
 ### OAuth Token Lifecycle
 
@@ -313,7 +281,7 @@ Contract:
 - `remoteWarnings` never block startup; clients always report remote validation failures in `remoteErrors`
 - `auth.mode = none` remote validation performs only the resource-server transport probe; `auth.mode = oauth` also performs real token acquisition
 - remote validation must not send a business request through `/api/v1/external-call`: token-endpoint validation performs a real token acquisition, and resource-server validation uses a dedicated transport-validation helper that performs only DNS resolution, TCP connect, and, when TLS is enabled, SSL/TLS handshake using the same trust material as the runtime client, without sending an HTTP method, path, body, or headers
-- in `echoMode`, no HTTP clients, auth providers, token managers, or remote probes are constructed; `off` returns no report and other modes return one empty-success report per configured `extensionId` with empty `localErrors`, `remoteErrors`, and `remoteWarnings`
+- in `echoMode`, no HTTP clients, OAuth token managers, or remote probes are constructed; `off` returns no report and other modes return one empty-success report per configured `extensionId` with empty `localErrors`, `remoteErrors`, and `remoteWarnings`
 
 ## Error Model and Boundary Mapping
 
