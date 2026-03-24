@@ -97,7 +97,7 @@ Runtime rules:
 - do not invalidate on `403`, `404`, `429`, `5xx`, timeouts, or transport failures
 - record `WWW-Authenticate` when present for diagnostics, but do not depend on it for invalidation
 - after the single auth-local replay, `200` succeeds; `401`, `400`, `403`, and `404` are terminal; `408`, `429`, `500`, `502`, `503`, and `504` remain retryable outer-attempt outcomes; transport failures mapped to retryable statuses behave the same way
-- token-acquisition failures are classified from the structured auth failure, not from a later flattened HTTP status code
+- token-acquisition failures are classified from a compact auth failure model, not from a later flattened HTTP status code
 - if no positive deadline budget remains, neither token acquisition nor a resource request is started
 
 The outer retry loop remains owned by `HttpExtensionServiceClient`; the spec does not require a new auth-provider-driven async orchestration layer. If the implementation keeps the current blocking retry loop shape, token-endpoint work and the auth-local replay must still honor the same absolute operation deadline.
@@ -121,10 +121,12 @@ Shared in-flight rules:
 
 Token-endpoint failure classification:
 
-- this retryability matrix is specific to external-call OAuth and does not inherit the gRPC exception policy used elsewhere
-- retryable failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, plus connect timeout, request timeout, and transient connect or I/O failure before an HTTP response
-- fatal failures are HTTP `400`, `401`, `403`, `404`, any other `4xx`, TLS trust or certificate failure, TLS hostname-verification failure, malformed token response, unsupported `token_type`, client-assertion signing failure, and local auth-material or key-loading failure
-- there is no separate auth-local retry loop for token acquisition; retryable token-endpoint failures are returned to the outer retry loop as the outcome of the current outer attempt
+- token-endpoint failures are classified only as retryable token-endpoint failure, fatal token-endpoint failure, token-response failure, or local OAuth failure
+- retryable token-endpoint failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, plus connect timeout, request timeout, and transient connect or I/O failure before an HTTP response
+- fatal token-endpoint failures are non-retryable token-endpoint HTTP failures plus TLS trust, certificate, or hostname-verification failures
+- token-response failures cover malformed token responses, unusable expiry metadata, and non-`Bearer` `token_type`
+- local OAuth failures cover client-assertion signing failure and local auth-material or key-loading failure
+- there is no separate auth-local retry loop for token acquisition; retryable token-endpoint failures are returned to the outer retry loop as the outcome of the current outer attempt, while all other auth failures fail the current outer attempt immediately
 - during foreground acquisition, the token-endpoint HTTP attempt itself must fit within the caller's remaining outer deadline
 - if a retryable token-endpoint failure includes `Retry-After`, that hint may be used by the outer retry loop when scheduling the next outer attempt
 
@@ -280,31 +282,22 @@ Contract:
 
 ## Error Model and Boundary Mapping
 
-Internally, the participant distinguishes token acquisition failure, token rejection by the resource server, resource-server transport failure, and resource-server application error. The internal error ADT stays structured and is flattened to the current `ExternalCallError` shape only at the boundary to the Daml engine. Logs, metrics, and retry decisions use the structured classes.
+Internally, the participant distinguishes token acquisition failure, token rejection by the resource server, resource-server transport failure, and resource-server application error. The auth-side classification stays intentionally small and is flattened to the current `ExternalCallError` shape only at the boundary to the Daml engine. Logs, metrics, and retry decisions use these compact classes.
 
-`ExternalCallAuthFailure` carries a message and an optional token-endpoint request id. Concrete cases:
+`ExternalCallAuthFailure` has only four cases:
 
-- `TokenEndpointHttpFailure(statusCode, message, requestId)`
-- `TokenEndpointTimeout(message, requestId)`
-- `TokenEndpointIoFailure(message, requestId)`
-- `TokenEndpointTlsFailure(message, requestId)`
-- `MalformedTokenResponse(message, requestId)` for missing or unusable token-response fields, including unusable expiry metadata
-- `UnsupportedTokenType(message, requestId)` when `token_type` is present but not `Bearer`
-- `ClientAssertionSigningFailure(message)` for local signing failures while building `private_key_jwt`
-- `LocalAuthMaterialFailure(message)` for other local auth-material and key-loading failures
+- `RetryableTokenEndpointFailure(statusCode, message, requestId, retryAfterSeconds)`
+- `FatalTokenEndpointFailure(statusCode, message, requestId)`
+- `TokenResponseFailure(message, requestId)` for malformed or unusable token responses, including non-`Bearer` `token_type`
+- `LocalOAuthFailure(message)` for local signing, key-loading, and other local auth-material failures
 
 `ExtensionServiceExternalCallHandler` continues to expose only `statusCode`, `message`, and `requestId`.
 
 Flattening rules:
 
-- `TokenEndpointHttpFailure` preserves the HTTP status code
-- `TokenEndpointTimeout` maps to `408`
-- `TokenEndpointIoFailure` maps to `503`
-- `TokenEndpointTlsFailure` maps to `503`
-- `ClientAssertionSigningFailure` maps to `500`
-- `LocalAuthMaterialFailure` maps to `500`
-- `UnsupportedTokenType` maps to `502`
-- `MalformedTokenResponse` maps to `502`
+- `RetryableTokenEndpointFailure` and `FatalTokenEndpointFailure` preserve their stored `statusCode`
+- `TokenResponseFailure` maps to `502`
+- `LocalOAuthFailure` maps to `500`
 - every token-acquisition failure message is prefixed with `OAuth token acquisition failed:`
 - token rejection by the resource server maps to `401` after auth-local replay is exhausted and uses the message `Unauthorized - OAuth token rejected by resource server`
 - resource-server transport failures preserve the current transport-derived status mapping and messages from `HttpExtensionServiceClient`
@@ -313,11 +306,9 @@ Flattening rules:
 Boundary request-id rule:
 
 - the boundary `requestId` is the participant-generated outbound correlation id from the last HTTP interaction that determined the final failure for the outer attempt
-- `ExternalCallAuthFailure.requestId` is the participant-generated token-endpoint request id when token-endpoint HTTP work had already started
-- if the final failure happens before any resource request is sent, return `authFailure.requestId` when present, otherwise `None`
+- for token-acquisition failures, return the participant-generated token-endpoint request id when token-endpoint HTTP work had already started
 - if a resource response ends the attempt without an auth-local replay, return that resource request id
-- if a `401` triggers token acquisition and a replay request is sent, the replay request id supersedes both the original resource request id and the token-endpoint request id
-- if token acquisition after a `401` fails before a replay request is sent, return `authFailure.requestId` when present, otherwise the original `401` resource request id
+- if a `401` triggers token acquisition and a replay request is sent, the replay request id supersedes both the original resource request id and any token-endpoint request id; if token acquisition after a `401` fails before a replay request is sent, fall back to the original `401` resource request id when no token-endpoint request id is available
 
 ## Observability and Testing
 
