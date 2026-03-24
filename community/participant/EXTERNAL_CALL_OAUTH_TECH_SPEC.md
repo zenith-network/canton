@@ -206,11 +206,14 @@ Token response requirements:
 
 Any token response that omits one of those fields, or provides unusable expiry metadata, is rejected.
 
+`token_type` must be `Bearer`, matched case-insensitively. Any other token type is rejected.
+
 ### Access-token handling
 
 Returned OAuth access tokens are treated as opaque bearer tokens together with expiry metadata.
 
 The participant does not parse or locally verify the returned access token.
+The participant sends the access token to the resource server as `Authorization: Bearer <access_token>`.
 
 Validation responsibility is split as follows:
 

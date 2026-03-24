@@ -76,6 +76,7 @@ At minimum:
 - the participant must be able to obtain an access token through an OAuth service-to-service flow suitable for machine clients
 - the access token must be attached to outbound external call requests
 - the mechanism must support provider-required audience and scope configuration
+- the token response must provide `token_type = Bearer`, matched case-insensitively; any other token type must be rejected
 
 ### R2. No Static Bearer Token As The Primary Auth Model
 
