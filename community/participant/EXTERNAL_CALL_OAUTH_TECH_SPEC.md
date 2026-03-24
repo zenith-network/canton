@@ -47,7 +47,7 @@ The design introduces `OAuthAccessTokenManager`, `OAuthTokenClient`, and `Privat
 Component responsibilities:
 
 - `HttpExtensionServiceClient` resolves `auth.mode`, asks `OAuthAccessTokenManager` for a token when OAuth is enabled, injects `Authorization: Bearer <token>`, decides whether a resource-server `401` triggers one invalidate-and-replay cycle, and feeds the final outer-attempt outcome back into the existing retry loop
-- `OAuthAccessTokenManager` owns cached token state, shared in-flight acquisition, refresh behavior, and token-conditional invalidation
+- `OAuthAccessTokenManager` owns cached token state, shared in-flight acquisition, expiry checks, and token-conditional invalidation
 - `OAuthTokenClient` talks only to the configured token endpoint, builds and sends the `client_credentials` request with `private_key_jwt`, parses the token response, and classifies token-endpoint failures
 - no auth-mode-polymorphic hot-path interface is introduced; `auth.mode = none` is handled as the absence of OAuth work rather than via a `NoAuthProvider`
 
@@ -60,14 +60,15 @@ Rules:
 
 Lifecycle ownership:
 
-- `ParticipantNode` passes its existing clock into `ExtensionServiceManager`
-- `ExtensionServiceManager` owns extension clients; when OAuth is enabled for an extension, the corresponding `HttpExtensionServiceClient` owns the `OAuthAccessTokenManager` for that extension and passes it the clock plus shutdown signal it needs
+- `ParticipantNode` passes its existing clock into `ExtensionServiceManager` so OAuth helpers can use it for token-expiry comparisons
+- `ExtensionServiceManager` owns extension clients; when OAuth is enabled for an extension, the corresponding `HttpExtensionServiceClient` owns the `OAuthAccessTokenManager` and `OAuthTokenClient` for that extension
+- no long-lived auth-side background task is introduced in the first implementation
 - resource-server and token-endpoint clients are built for the TLS and auth configuration they actually use; the design must not depend on one globally shared `HttpClient` across distinct TLS and auth cases
 - constructing `ExtensionServiceManager`, `HttpExtensionServiceClient`, and lightweight OAuth config wrappers must not perform fallible key loading, trust-material loading, or TLS-context construction; those failures must surface through explicit startup validation or structured runtime call failures rather than escaping construction
 
 ### Request Execution, Retries, and Deadlines
 
-`HttpExtensionServiceClient` keeps the existing resource-server protocol: endpoint shape `/api/v1/external-call`, `X-Daml-External-*` headers, participant-generated request ids, transport execution, response classification, and the outer retry budget. It stops owning token file loading, token caching and refresh, token invalidation policy, and token-endpoint request construction.
+`HttpExtensionServiceClient` keeps the existing resource-server protocol: endpoint shape `/api/v1/external-call`, `X-Daml-External-*` headers, participant-generated request ids, transport execution, response classification, and the outer retry budget. It stops owning token file loading, token caching and expiry handling, token invalidation policy, and token-endpoint request construction.
 
 For one external-call operation, `HttpExtensionServiceClient` computes one absolute deadline from `max-total-timeout` before the first outer attempt. Every outer attempt uses the remaining budget against that fixed deadline.
 
@@ -103,15 +104,15 @@ The outer retry loop remains owned by `HttpExtensionServiceClient`; the spec doe
 
 ### OAuth Token Lifecycle
 
-Add an OAuth-specific access-token manager that reuses `AuthenticationTokenManager` lifecycle semantics directly through `AuthenticationTokenManagerConfig`.
+Add an OAuth-specific access-token manager that reuses only the useful parts of the `AuthenticationTokenManager` pattern: lazy first acquisition, cached expiry-aware state, and shared in-flight acquisition. The first implementation does not reuse `AuthenticationTokenManagerConfig`, does not schedule background refresh, and does not introduce a second operator-facing retry policy.
 
 Concrete token type: `OAuthAccessTokenWithExpiry(accessToken: String, expiresAt: CantonTimestamp, tokenType: String)`.
 
-`OAuthAccessTokenManager` provides lazy first acquisition, a cached token with expiry, one shared in-flight acquisition or refresh, background refresh before expiry, explicit invalidation, and retry/backoff during acquisition. Foreground acquisition is driven by a business request and uses the remaining outer deadline from `HttpExtensionServiceClient`; background refresh is bounded only by token-manager retry settings and per-attempt HTTP timeouts. Failed background refresh clears the cached token, matching `AuthenticationTokenManager` semantics, so the next business request performs foreground acquisition.
+`OAuthAccessTokenManager` provides lazy first acquisition, a cached token with expiry, one shared in-flight foreground acquisition, and explicit invalidation. It performs no background work. When a business request needs auth, the manager returns the cached token if it is still valid; otherwise it starts one foreground token acquisition bounded by the caller's remaining outer deadline. If that acquisition fails, the current outer attempt fails and the existing outer retry loop decides whether to retry. Expiry is handled on demand: an expired cached token is discarded and the next business request acquires a fresh token.
 
 Shared in-flight rules:
 
-- one foreground or background fetch is shared; later callers wait on that future instead of starting a second token-endpoint request
+- one foreground fetch is shared; later callers wait on that future instead of starting a second token-endpoint request
 - each waiting business request still enforces its own outer deadline while waiting
 - if one waiting caller times out, it fails locally without cancelling the shared fetch
 - a shared fetch that later succeeds populates the cache for later callers
@@ -123,9 +124,9 @@ Token-endpoint failure classification:
 - this retryability matrix is specific to external-call OAuth and does not inherit the gRPC exception policy used elsewhere
 - retryable failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, plus connect timeout, request timeout, and transient connect or I/O failure before an HTTP response
 - fatal failures are HTTP `400`, `401`, `403`, `404`, any other `4xx`, TLS trust or certificate failure, TLS hostname-verification failure, malformed token response, unsupported `token_type`, client-assertion signing failure, and local auth-material or key-loading failure
-- `429` honors `Retry-After` when present, capped by token-manager retry settings
-- during foreground acquisition, every retry attempt and delay must fit within the caller's remaining outer deadline
-- during background refresh, the same retryability matrix applies, but timing is bounded only by token-manager retry settings and per-attempt HTTP timeouts
+- there is no separate auth-local retry loop for token acquisition; retryable token-endpoint failures are returned to the outer retry loop as the outcome of the current outer attempt
+- during foreground acquisition, the token-endpoint HTTP attempt itself must fit within the caller's remaining outer deadline
+- if a retryable token-endpoint failure includes `Retry-After`, that hint may be used by the outer retry loop when scheduling the next outer attempt
 
 Token request and response rules:
 
@@ -187,7 +188,7 @@ Transport ownership:
 - during a foreground attempt, the effective connect timeout is `min(connect-timeout, remaining max-total-timeout)` and the effective request timeout is `min(request-timeout, remaining max-total-timeout)`
 - `max-total-timeout` is the outer budget for one business external-call operation, including foreground token acquisition and one allowed `401` replay
 - `max-retries`, `retry-initial-delay`, and `retry-max-delay` are owned only by the outer business-request retry loop in `HttpExtensionServiceClient`
-- auth lifecycle retries are configured separately under `auth.oauth.token-manager` using `AuthenticationTokenManagerConfig`: `refresh-auth-token-before-expiry`, `retries`, `min-retry-interval`, and optional exponential-backoff settings
+- there is no separate `auth.oauth.token-manager` retry block in the first implementation; retryable token-endpoint failures consume the same outer retry budget as retryable resource-server failures
 
 Rotation application points:
 
@@ -228,11 +229,6 @@ extensions = {
         }
         audience = "ext.example.internal"
         scope = "external.call.invoke"
-        token-manager = {
-          refresh-auth-token-before-expiry = 20s
-          retries = 20
-          min-retry-interval = 500ms
-        }
         client-id = "participant1"
         key-id = "participant1-key"
         private-key-file = "/etc/canton/oauth-client-key.der"
@@ -328,17 +324,17 @@ Boundary request-id rule:
 
 Logging:
 
-- add structured logs for token acquisition start, success, and failure; token refresh; token invalidation; auth rejection on `401`; and final external-call failure classification
+- add structured logs for token acquisition start, success, and failure; cache hit and expired-token miss; token invalidation; auth rejection on `401`; and final external-call failure classification
 - safe log dimensions are extension id, auth mode, audience, scope, status code, and request id
-- never log access tokens, refresh tokens, client assertions, client secrets, or private key material
+- never log access tokens, client assertions, client secrets, private key material, or other secret-bearing token-endpoint fields
 
 Metrics:
 
 - add participant metrics under a new external-call subtree
-- include token acquisition success count, token acquisition failure count, token refresh count, token invalidation count, token cache hit and miss count, and an auth latency timer
+- include token acquisition success count, token acquisition failure count, token invalidation count, token cache hit and miss count, and an auth latency timer
 
 Tests:
 
-- unit coverage for auth config parsing and exclusivity, OAuth token acquisition success and failure, concurrent callers sharing one token acquisition, pre-expiry refresh, token-conditional invalidation on `401`, audience and scope propagation, private-key and certificate loading failures, deadline composition between auth and business retries, fixed-lifetime `private_key_jwt` construction, and background refresh using an injected clock rather than wall-clock sleeps
-- integration coverage for unauthenticated external calls under `auth.mode = none`, OAuth-protected calls succeeding end to end, expired tokens refreshing successfully, `401` causing one invalidate-and-replay cycle, submission and validation both succeeding under the same OAuth config, submission and validation producing the same business response even though access tokens and client assertions differ between runs, signing-key rotation taking effect on the next token acquisition, resource-server or token-endpoint certificate rotation taking effect after participant restart, and remote validation not sending a business `_health` call
-- testing infrastructure must use an injectable clock for auth lifecycle tests and must mock token issuance through a dedicated token client or `MockOAuthServer`, not through the resource-server mock
+- unit coverage for auth config parsing and exclusivity, OAuth token acquisition success and failure, concurrent callers sharing one token acquisition, expired cached tokens forcing on-demand reacquisition, token-conditional invalidation on `401`, audience and scope propagation, private-key and certificate loading failures, deadline composition between auth and business retries, and fixed-lifetime `private_key_jwt` construction
+- integration coverage for unauthenticated external calls under `auth.mode = none`, OAuth-protected calls succeeding end to end, expired cached tokens causing the next call to obtain a fresh token successfully, `401` causing one invalidate-and-replay cycle, submission and validation both succeeding under the same OAuth config, submission and validation producing the same business response even though access tokens and client assertions differ between runs, signing-key rotation taking effect on the next token acquisition, resource-server or token-endpoint certificate rotation taking effect after participant restart, and remote validation not sending a business `_health` call
+- testing infrastructure must use an injectable clock for token-expiry tests and must mock token issuance through a dedicated token client or `MockOAuthServer`, not through the resource-server mock
