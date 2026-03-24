@@ -123,6 +123,39 @@ Proposed logical types:
 
 The important design point is the boundary, not the exact class names.
 
+Concrete auth-provider contract:
+
+- `prepareRequest(`
+- `  deadline: CantonTimestamp`
+- `)(implicit tc: TraceContext): FutureUnlessShutdown[Either[AuthPreparationFailure, PreparedAuth]]`
+- `handleResponse(`
+- `  statusCode: Int,`
+- `  preparedAuth: PreparedAuth,`
+- `  resourceRequestId: String,`
+- `  deadline: CantonTimestamp`
+- `)(implicit tc: TraceContext): FutureUnlessShutdown[AuthResponseDecision]`
+
+Concrete supporting types:
+
+- `final case class PreparedAuth(`
+- `  authorizationHeader: Option[String],`
+- `  tokenUsed: Option[String],`
+- `  tokenEndpointRequestId: Option[String],`
+- `)`
+- `sealed trait AuthResponseDecision`
+- `case object NoReplay extends AuthResponseDecision`
+- `final case class ReplayOnceWithFreshAuth(nextPreparedAuth: PreparedAuth) extends AuthResponseDecision`
+- `final case class FailAuth(authFailure: AuthPreparationFailure) extends AuthResponseDecision`
+
+Contract rules:
+
+- `prepareRequest` performs any foreground token acquisition required for the current outer attempt
+- `prepareRequest` receives the absolute outer deadline and is responsible for clamping token-endpoint work to that deadline
+- `PreparedAuth.tokenUsed` is the exact token attached to the outgoing resource request and is the value used for token-conditional invalidation
+- `PreparedAuth.tokenEndpointRequestId` records the last token-endpoint HTTP request id involved in preparing that auth state for the current outer attempt
+- `handleResponse` is pure from the perspective of business retry ownership: it may request one auth-local replay, but it does not advance the outer retry counter
+- `handleResponse` may return `ReplayOnceWithFreshAuth` at most once per outer attempt
+
 ### `HttpExtensionServiceClient` after refactor
 
 `HttpExtensionServiceClient` keeps:
@@ -486,14 +519,12 @@ Accepted security tradeoff:
 For one outer external-call attempt:
 
 1. `HttpExtensionServiceClient` calculates the remaining `maxTotalTimeout` budget.
-2. It asks the auth provider to decorate the resource-server request.
-3. The auth provider behaves as follows:
-   - for `none`, it returns immediately
-   - for `oauth`, it synchronously or asynchronously acquires a cached OAuth token using the remaining budget
-4. `HttpExtensionServiceClient` sends the request to `/api/v1/external-call` with the existing business headers unchanged and with the per-attempt timeout clamped to the remaining outer budget.
+2. It calls `ExternalCallAuthProvider.prepareRequest(deadline)`.
+3. `prepareRequest` returns `PreparedAuth`.
+4. `HttpExtensionServiceClient` sends the request to `/api/v1/external-call` with the existing business headers unchanged, the auth header from `PreparedAuth`, and the per-attempt timeout clamped to the remaining outer budget.
 5. If the response is not `401`, that response is the outcome of the outer attempt.
-6. If the response is `401`, the auth layer applies the token rejection policy.
-7. The auth layer may perform one auth-local replay inside the same outer attempt.
+6. If the response is `401`, `HttpExtensionServiceClient` calls `ExternalCallAuthProvider.handleResponse(statusCode, preparedAuth, resourceRequestId, deadline)`.
+7. `handleResponse` may perform one auth-local replay inside the same outer attempt by returning `ReplayOnceWithFreshAuth(nextPreparedAuth)`.
 8. The final response produced by that auth-local replay, or the original non-`401` response, becomes the outcome of the outer attempt.
 9. The outer retry loop then classifies that outer-attempt outcome as success, retryable failure, or terminal failure.
 
@@ -512,10 +543,10 @@ This keeps the policy precise while remaining compatible with providers that omi
 Exact control flow for `401` is:
 
 1. The initial resource-server call returns `401`.
-2. The auth provider checks whether the rejected token is still the current cached token.
+2. `handleResponse` checks whether `PreparedAuth.tokenUsed` is still the current cached token.
 3. If it is, the auth provider invalidates that cached token.
-4. The auth provider performs foreground token acquisition using the remaining outer deadline.
-5. `HttpExtensionServiceClient` replays the same business request once with the newly acquired token.
+4. `handleResponse` performs foreground token acquisition using the remaining outer deadline and returns `ReplayOnceWithFreshAuth(nextPreparedAuth)`.
+5. `HttpExtensionServiceClient` replays the same business request once with `nextPreparedAuth`.
 6. No second auth-local replay is allowed inside the same outer attempt.
 
 Outcome handling after the auth-local replay is:
@@ -650,9 +681,9 @@ The flattening rule is:
 Request-id rule:
 
 - the boundary `requestId` is the request id from the last HTTP interaction that determined the final failure returned for that outer attempt
-- if the final failure is a token-endpoint HTTP failure before any replay request is sent, return the token-endpoint request id
+- if the final failure is a token-endpoint HTTP failure before any replay request is sent, return `PreparedAuth.tokenEndpointRequestId` when present
 - if the final failure is the initial resource-server response and no auth-local replay is performed, return the initial resource-server request id
-- if a `401` triggers token acquisition and then a replay request is sent, the replay request id supersedes both the original `401` request id and the token-endpoint request id
+- if a `401` triggers token acquisition and then a replay request is sent, the replay request id supersedes both the original `401` request id and `PreparedAuth.tokenEndpointRequestId`
 - if token acquisition after a `401` fails before any replay request is sent, return the token-endpoint request id when a token-endpoint HTTP request was sent
 - if token acquisition after a `401` fails before any token-endpoint HTTP request was sent, return the original `401` resource-server request id
 - if the failure occurred before any HTTP request was sent, return `None`
