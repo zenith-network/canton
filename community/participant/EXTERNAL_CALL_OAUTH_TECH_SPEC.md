@@ -17,7 +17,8 @@ This spec assumes:
 
 Determinism requirement:
 
-- for a fixed `(extensionId, functionId, configHash, input, mode)`, successful business responses must not depend on access-token claims, client-assertion timestamps, `jti`, or OAuth client identity
+- for a fixed `(extensionId, functionId, configHash, input)`, successful business responses must be identical in `submission` and `validation`, and must not depend on access-token claims, client-assertion timestamps, `jti`, or OAuth client identity
+- `mode` remains part of the existing external-call wire contract and is forwarded unchanged, but it must not select a different successful business response
 - OAuth decides whether the participant may reach the service; once authorized, it must not behave as an extra business input
 
 Current integration point:
@@ -95,6 +96,7 @@ Lifecycle ownership:
 - `ExtensionServiceManager` owns auth providers, passes a `Clock` plus `isClosing` signal into `OAuthAccessTokenManager`, and closes auth providers from `onClosed()` so background refresh stops during shutdown
 - `ParticipantNode` passes its existing clock into the manager and registers the extension manager as a closeable so `onClosed()` always runs
 - resource-server and token-endpoint clients are built for the TLS and auth configuration they actually use; the design must not depend on one globally shared `HttpClient` across distinct TLS and auth cases
+- constructing `ExtensionServiceManager`, `ExtensionServiceClient`, auth providers, and their lightweight config wrappers must not perform fallible key loading, trust-material loading, or TLS-context construction; those failures must surface through explicit startup validation or structured runtime call failures rather than escaping construction
 
 ### Request Execution, Retries, and Deadlines
 
@@ -216,12 +218,12 @@ Transport ownership:
 Rotation application points:
 
 - signing keys are re-read when a new client assertion is produced
-- token-endpoint and resource-server trust material is loaded when the corresponding HTTP client is built
+- token-endpoint and resource-server trust material is loaded during explicit local validation and again when the corresponding runtime HTTP client is built
 - replacing trust material therefore takes effect on participant restart, not via hot reload
 
 ### Startup Validation
 
-Startup validation is explicit in this design. `ParticipantNode` must await `ExtensionServiceManager.validateAllExtensions()` before exposing services. `EngineExtensionsConfig.echoMode` remains a test-only bypass.
+Startup validation is explicit in this design and is a node-startup gate, not only a Ledger API gate. `ParticipantNode` must await `ExtensionServiceManager.validateAllExtensions()` before enabling any runtime path that can execute or re-execute external calls, including synchronizer-side reinterpretation and confirmation, and before exposing Ledger API services. `EngineExtensionsConfig.echoMode` remains a test-only bypass.
 
 Validation mode:
 
