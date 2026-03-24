@@ -4,7 +4,7 @@
 
 Draft for iterative refinement.
 
-This document turns the requirements into a codebase-grounded design for the current participant implementation.
+This document turns the requirements into a codebase-grounded design for the current participant implementation. It intentionally consolidates related runtime, retry, and validation rules so each normative rule is stated once.
 
 ## Scope and Final-State Decisions
 
@@ -63,9 +63,9 @@ Existing Canton pieces are reusable in pattern, not in exact type:
 
 `AuthenticationTokenManager` cannot be reused literally for OAuth access tokens because it is typed around sequencer `AuthenticationToken`, which is a fixed-length binary token with a gRPC-oriented error surface. The lifecycle pattern is reusable; the concrete types are not.
 
-## Target Runtime Architecture
+## Target Runtime Design
 
-### Auth boundary
+### Auth boundary and ownership
 
 Add a dedicated participant extension auth package and move all auth-specific behavior behind a new provider boundary. The auth layer is responsible for:
 
@@ -136,6 +136,13 @@ Contract rules:
 - `handleResponse` may invalidate cached auth state and invoke the same foreground-acquisition path used by `prepareRequest` to obtain fresh auth for one auth-local replay.
 - `handleResponse` may request at most one auth-local replay inside an outer attempt and never advances the outer retry counter.
 
+Lifecycle ownership:
+
+- `ExtensionServiceManager` owns auth providers and passes a `Clock` plus `isClosing` signal into `OAuthAccessTokenManager`.
+- `ExtensionServiceManager.onClosed()` closes auth providers so background refresh stops during shutdown.
+- `ParticipantNode` passes its existing clock into the manager.
+- `ParticipantNode` must register the extension manager as a closeable so `onClosed()` is guaranteed to run.
+
 ### `HttpExtensionServiceClient` after refactor
 
 `HttpExtensionServiceClient` keeps:
@@ -157,15 +164,37 @@ For one external-call operation, `HttpExtensionServiceClient` computes one absol
 
 Each outer attempt becomes:
 
-1. compute remaining budget against the operation deadline
-2. ask the auth provider to prepare auth using that deadline
-3. send the resource request
-4. let the auth provider inspect `401` responses
-5. feed the attempt result back into the existing outer retry loop
+1. Compute the remaining budget against the operation deadline.
+2. Ask the auth provider to prepare auth for that deadline.
+3. Send the request to `/api/v1/external-call` with the existing `X-Daml-External-*` headers unchanged, the auth header from `PreparedAuth`, and effective timeouts clamped to the remaining deadline.
+4. If the response is not `401`, that response is the outcome of the outer attempt.
+5. If the response is `401`, build `AuthResponseContext` from the concrete `HttpResponse` and the participant-generated resource request id.
+6. Let `handleResponse` decide whether to fail auth or replay once with fresh auth.
+7. Treat the replay result, or the original non-`401` response, as the outcome of the outer attempt.
+8. Feed that outer-attempt outcome back into the existing retry loop.
 
 Because both auth-provider calls are `FutureUnlessShutdown`, the outer retry loop must be rewritten around async `FutureUnlessShutdown` composition. Retry delays must not use `Threading.sleep`. The actual HTTP send may remain blocking internally or move to `sendAsync`, but the attempt orchestration itself must be async.
 
-### OAuth token management
+`401` handling and retry ownership:
+
+- Invalidate cached OAuth state on `401 Unauthorized` only if the rejected token still matches the provider's current token.
+- Replay the same business request once with a freshly acquired token, subject to the same outer deadline.
+- Do not invalidate on `403`, `404`, `429`, `5xx`, timeouts, or transport failures.
+- Record `WWW-Authenticate` when present for diagnostics, but do not depend on it for invalidation.
+- After the single auth-local replay, `200` succeeds; `401`, `400`, `403`, and `404` are terminal; `408`, `429`, `500`, `502`, `503`, and `504` remain retryable outer-attempt outcomes; transport failures mapped to retryable statuses behave the same way.
+- Token-acquisition failures are classified from the structured auth failure, not from a later flattened HTTP status code.
+- `HttpExtensionServiceClient.callWithRetry` remains the only business-request retry loop.
+- `maxRetries` counts only completed outer retries.
+- An outer attempt may include one initial resource request and at most one auth-local replay.
+- The auth-local replay does not consume a `maxRetries` slot.
+- Any retryable result produced after the replay is the final result of that outer attempt.
+- If the outer loop retries after that result, that consumes one `maxRetries` slot.
+
+Determinism rule:
+
+OAuth metadata must not enter Daml-level business semantics. For a fixed `(extensionId, functionId, configHash, input, mode)`, successful business responses must not depend on access-token claims, client-assertion timestamps, `jti`, or OAuth client identity. OAuth controls whether the participant may reach the service, but once authorized it must not behave as an additional business input.
+
+### OAuth token lifecycle and token endpoint
 
 Add an OAuth-specific access-token manager that reuses the `AuthenticationTokenManager` lifecycle model and configuration semantics:
 
@@ -182,13 +211,6 @@ Concrete token type:
 
 `OAuthAccessTokenManager` uses `AuthenticationTokenManagerConfig` directly. There is no external-call-specific lifecycle config.
 
-Lifecycle ownership:
-
-- `ExtensionServiceManager` owns auth providers and passes a `Clock` plus `isClosing` signal into `OAuthAccessTokenManager`
-- `ExtensionServiceManager.onClosed()` closes auth providers so background refresh stops during shutdown
-- `ParticipantNode` passes its existing clock into the manager
-- `ParticipantNode` must register the extension manager as a closeable so `onClosed()` is guaranteed to run
-
 Foreground and background acquisition rules:
 
 - foreground acquisition is driven by a business request and uses the remaining outer deadline from `HttpExtensionServiceClient`
@@ -203,8 +225,6 @@ Shared in-flight acquisition rules:
 - each waiting business request still enforces its own outer deadline while waiting
 - if one waiting caller times out, it fails locally without cancelling the shared fetch
 - a shared fetch that later succeeds populates the cache for later callers
-
-### Token-endpoint client and retry policy
 
 `OAuthTokenClient` is a dedicated HTTP client for the token endpoint. It:
 
@@ -237,21 +257,22 @@ Fatal token-endpoint failures:
 - client-assertion signing failure
 - local auth-material or key-loading failure
 
-Retry timing rules:
+Retry timing and timeout rules:
 
 - `429` honors `Retry-After` when present, capped by token-manager retry settings
 - during foreground acquisition, every retry attempt and delay must fit within the caller's remaining outer deadline
 - during background refresh, the same retryability matrix applies, but timing is bounded only by token-manager retry settings and per-attempt HTTP timeouts
+- for foreground work, effective connect timeout is `min(connect-timeout, remaining max-total-timeout)`
+- for foreground work, effective request timeout is `min(request-timeout, remaining max-total-timeout)`
+- if no positive budget remains, the request is not started
+- background refresh uses the same configured `connect-timeout` and `request-timeout` as per-attempt caps and never borrows time from a business request
 
-Token-response requirements:
+Token request and response rules:
 
 - grant type is `client_credentials`
 - required response fields are `access_token`, `token_type`, and `expires_in`
 - `token_type` must be `Bearer`, matched case-insensitively
 - responses missing those fields or providing unusable expiry metadata are rejected
-
-Access-token handling rules:
-
 - access tokens are treated as opaque bearer tokens plus expiry metadata
 - the participant does not parse or locally verify the access token
 - the participant sends `Authorization: Bearer <access_token>` to the resource server
@@ -259,12 +280,35 @@ Access-token handling rules:
 - the resource server validates the access token
 - the participant validates response shape, token type, expiry metadata, and auth-failure signals
 
-Timeout rules:
+OAuth client authentication:
 
-- for foreground work, effective connect timeout is `min(connect-timeout, remaining max-total-timeout)`
-- for foreground work, effective request timeout is `min(request-timeout, remaining max-total-timeout)`
-- if no positive budget remains, the request is not started
-- background refresh uses the same configured `connect-timeout` and `request-timeout` as per-attempt caps and never borrows time from a business request
+- The first implementation supports one production client-auth mechanism: `private_key_jwt`.
+- The token request includes `client_assertion_type = urn:ietf:params:oauth:client-assertion-type:jwt-bearer`.
+- The token request includes `client_assertion = <signed JWT>`.
+- JWT header uses `alg = RS256`.
+- `key-id` is optional and is emitted as `kid` when present.
+- JWT claims are:
+  - `iss = client-id`
+  - `sub = client-id`
+  - `aud = <canonical token-endpoint URI>`
+  - `iat = now`
+  - `exp = now + 30s`
+  - `jti = <fresh random identifier>`
+- The participant never reuses a previously signed client assertion.
+- `scope` is optional and is sent as a token-request field when present.
+- `audience` is optional and is sent as a token-request field when present.
+- Signed assertions, key material, and key-file contents are never logged or persisted.
+
+Key-handling rules:
+
+- RSA DER/PKCS8 is the only supported signing-key format.
+- Private keys are re-read whenever a new client assertion is produced, so key rotation takes effect on the next token acquisition.
+- Assertion lifetime is fixed and short in the first implementation rather than becoming a new operator-facing knob.
+
+Accepted tradeoff:
+
+- issued access tokens are still bearer tokens and remain replayable until expiry if exfiltrated
+- this is accepted in exchange for a simpler and more canonical external-call auth contract
 
 ## Config Model
 
@@ -288,18 +332,13 @@ Implementation rules:
 - `keepAliveClient` is not part of the `external_call` contract
 - PureConfig readers and writers remain local to the new `ExtensionServiceConfig`-specific case classes
 
-### Auth modes and TLS rules
+Auth modes and endpoint rules:
 
-Supported auth modes:
-
-- `none`
-- `oauth`
-
-`auth.mode = oauth` is the canonical production path. When OAuth is enabled:
-
-- TLS is required for both the resource server and the token endpoint
-- plaintext `http` endpoints are rejected during config validation
-- any insecure or trust-all hook remains test-only scaffolding and is not part of the supported OAuth contract
+- Supported auth modes are `none` and `oauth`.
+- `auth.mode = oauth` is the canonical production path.
+- When OAuth is enabled, TLS is required for both the resource server and the token endpoint.
+- Plaintext `http` endpoints are rejected during config validation.
+- Any insecure or trust-all hook remains test-only scaffolding and is not part of the supported OAuth contract.
 
 Rotation application points:
 
@@ -307,52 +346,29 @@ Rotation application points:
 - token-endpoint and resource-server trust material is loaded when the corresponding HTTP client is built
 - replacing trust material therefore takes effect on participant restart, not via hot reload
 
-### Token-endpoint URI derivation
+Token-endpoint URI derivation:
 
-The token-endpoint config derives one canonical HTTPS URI string.
+- The token-endpoint config derives one canonical HTTPS URI string.
+- Scheme is always `https`.
+- Host is the configured `address`, copied exactly.
+- Port is omitted when it is `443`.
+- Otherwise port is included as `:<port>`.
+- Path is the configured `path`, copied exactly.
+- `path` must start with `/`.
+- `path` must not contain a query string.
+- `path` must not contain a fragment.
+- No dot-segment normalization, trailing-slash rewriting, or host rewriting is performed.
+- That canonical URI is used both as the actual token-endpoint request target and as the `aud` claim in the `private_key_jwt` client assertion.
+- This design does not introduce a separate client-assertion audience field.
 
-Derivation rules:
+Transport and retry settings:
 
-- scheme is always `https`
-- host is the configured `address`, copied exactly
-- port is omitted when it is `443`
-- otherwise port is included as `:<port>`
-- path is the configured `path`, copied exactly
-
-Validation rules:
-
-- `path` must start with `/`
-- `path` must not contain a query string
-- `path` must not contain a fragment
-- no dot-segment normalization, trailing-slash rewriting, or host rewriting is performed
-
-That canonical URI is used both as the actual token-endpoint request target and as the `aud` claim in the `private_key_jwt` client assertion. This design does not introduce a separate client-assertion audience field.
-
-### Retry and timeout ownership
-
-Business-request transport settings remain top-level extension settings:
-
-- `connect-timeout`
-- `request-timeout`
-- `max-total-timeout`
-- `max-retries`
-- `retry-initial-delay`
-- `retry-max-delay`
-
-Ownership rules:
-
-- `connect-timeout` and `request-timeout` are the shared per-attempt HTTP timeout settings for both resource-server calls and token-endpoint calls
-- `max-total-timeout` is the outer budget for one business external-call operation, including any foreground token acquisition and one allowed `401` replay
-- `max-retries`, `retry-initial-delay`, and `retry-max-delay` are owned only by the outer business-request retry loop in `HttpExtensionServiceClient`
-
-Auth lifecycle retries are configured separately under `auth.oauth.token-manager` using `AuthenticationTokenManagerConfig`:
-
-- `refresh-auth-token-before-expiry`
-- `retries`
-- `min-retry-interval`
-- optional exponential-backoff settings
-
-This split is intentional: extension-level timeout settings provide the per-attempt HTTP caps used by both destinations, extension-level retry settings govern replay of business calls to the resource server, and token-manager retries govern acquisition and refresh of OAuth tokens.
+- Business-request transport settings remain top-level extension settings: `connect-timeout`, `request-timeout`, `max-total-timeout`, `max-retries`, `retry-initial-delay`, `retry-max-delay`, and `request-id-header`.
+- `connect-timeout` and `request-timeout` are the shared per-attempt HTTP timeout settings for both resource-server calls and token-endpoint calls.
+- `max-total-timeout` is the outer budget for one business external-call operation, including any foreground token acquisition and one allowed `401` replay.
+- `max-retries`, `retry-initial-delay`, and `retry-max-delay` are owned only by the outer business-request retry loop in `HttpExtensionServiceClient`.
+- Auth lifecycle retries are configured separately under `auth.oauth.token-manager` using `AuthenticationTokenManagerConfig`: `refresh-auth-token-before-expiry`, `retries`, `min-retry-interval`, and optional exponential-backoff settings.
+- This split is intentional: extension-level timeout settings provide the per-attempt HTTP caps used by both destinations, extension-level retry settings govern replay of business calls to the resource server, and token-manager retries govern acquisition and refresh of OAuth tokens.
 
 ### Example config
 
@@ -405,108 +421,6 @@ extensions = {
 }
 ```
 
-## OAuth Client Authentication
-
-The first implementation supports one production client-auth mechanism: `private_key_jwt`.
-
-Concrete contract:
-
-- grant type is always `client_credentials`
-- the token request includes `client_assertion_type = urn:ietf:params:oauth:client-assertion-type:jwt-bearer`
-- the token request includes `client_assertion = <signed JWT>`
-- JWT header uses `alg = RS256`
-- `key-id` is optional and is emitted as `kid` when present
-- JWT claims are:
-  - `iss = client-id`
-  - `sub = client-id`
-  - `aud = <canonical token-endpoint URI>`
-  - `iat = now`
-  - `exp = now + 30s`
-  - `jti = <fresh random identifier>`
-- the participant never reuses a previously signed client assertion
-- `scope` is optional and is sent as a token-request field when present
-- `audience` is optional and is sent as a token-request field when present
-- signed assertions, key material, and key-file contents are never logged or persisted
-
-Key-handling rules:
-
-- RSA DER/PKCS8 is the only supported signing-key format
-- private keys are re-read whenever a new client assertion is produced, so key rotation takes effect on the next token acquisition
-- assertion lifetime is fixed and short in the first implementation rather than becoming a new operator-facing knob
-
-Accepted tradeoff:
-
-- issued access tokens are still bearer tokens and remain replayable until expiry if exfiltrated
-- this is accepted in exchange for a simpler and more canonical external-call auth contract
-
-## Request, Retry, and Determinism Rules
-
-### One outer attempt
-
-For one outer external-call attempt within a single external-call operation:
-
-1. `HttpExtensionServiceClient` reuses the operation's absolute deadline, computed once from `max-total-timeout` before the first outer attempt, and computes the remaining budget for this attempt.
-2. It asks the auth provider to prepare auth for that deadline.
-3. It sends the request to `/api/v1/external-call` with the existing `X-Daml-External-*` headers unchanged, the auth header from `PreparedAuth`, and effective timeouts clamped to the remaining deadline.
-4. If the response is not `401`, that response is the outcome of the outer attempt.
-5. If the response is `401`, the client builds `AuthResponseContext` from the concrete `HttpResponse` and the participant-generated resource request id.
-6. `handleResponse` may request one auth-local replay by returning `ReplayOnceWithFreshAuth`.
-7. The final response produced by that replay, or the original non-`401` response, becomes the outcome of the outer attempt.
-8. The outer retry loop then classifies that outer-attempt outcome as success, retryable failure, or terminal failure.
-
-### `401` invalidation and replay
-
-Invalidation policy:
-
-- invalidate cached OAuth state on `401 Unauthorized` only if the rejected token still matches the provider's current token
-- replay the same business request once with a freshly acquired token, subject to the same outer deadline
-- do not invalidate on `403`, `404`, `429`, `5xx`, timeouts, or transport failures
-- record `WWW-Authenticate` when present for diagnostics, but do not depend on it for invalidation
-
-After the single auth-local replay:
-
-- `200` succeeds
-- `401`, `400`, `403`, or `404` end the outer attempt terminally
-- `408`, `429`, `500`, `502`, `503`, and `504` become retryable outer-attempt outcomes
-- transport failures mapped to retryable statuses behave the same way
-- token-acquisition failures are classified from the structured auth failure, not from the later flattened HTTP status code
-
-### Retry ownership
-
-`HttpExtensionServiceClient.callWithRetry` remains the only business-request retry loop.
-
-Rules:
-
-- `maxRetries` counts only completed outer retries
-- an outer attempt may include one initial resource request and at most one auth-local replay
-- the auth-local replay does not consume a `maxRetries` slot
-- any retryable result produced after the replay is the final result of that outer attempt
-- if the outer loop retries after that result, that consumes one `maxRetries` slot
-- auth-failure retryability is decided from the structured auth failure before any engine-facing boundary flattening
-
-### Determinism
-
-OAuth metadata must not enter Daml-level business semantics.
-
-Unchanged inputs:
-
-- business request path
-- `X-Daml-External-Function-Id`
-- `X-Daml-External-Config-Hash`
-- `X-Daml-External-Mode`
-- request and response body contract
-- submission versus validation business meaning
-
-Operational-only changes:
-
-- outbound auth headers
-- token-acquisition traffic
-
-Invariant:
-
-- for a fixed `(extensionId, functionId, configHash, input, mode)`, successful business responses must not depend on access-token claims, client-assertion timestamps, `jti`, or OAuth client identity
-- OAuth controls whether the participant may reach the service, but once authorized it must not behave as an additional business input
-
 ## Error Model and Boundary Mapping
 
 Internally, the participant should distinguish:
@@ -522,27 +436,16 @@ Implementation rule:
 - flatten to the current `ExternalCallError` shape only at the boundary to the Daml engine
 - use the structured classes for logs, metrics, and retry decisions
 
-### Auth failure classes
-
 `ExternalCallAuthFailure` should carry a message and an optional token-endpoint request id. Concrete cases:
 
 - `TokenEndpointHttpFailure(statusCode, message, requestId)`
 - `TokenEndpointTimeout(message, requestId)`
 - `TokenEndpointIoFailure(message, requestId)`
 - `TokenEndpointTlsFailure(message, requestId)`
-- `MalformedTokenResponse(message, requestId)`
-- `UnsupportedTokenType(message, requestId)`
-- `ClientAssertionSigningFailure(message)`
-- `LocalAuthMaterialFailure(message)`
-
-Class rules:
-
-- `UnsupportedTokenType` is used only when `token_type` is present but not `Bearer`
-- `MalformedTokenResponse` covers missing or unusable token-response fields, including unusable expiry metadata
-- `ClientAssertionSigningFailure` is limited to local signing failures while building `private_key_jwt`
-- `LocalAuthMaterialFailure` covers other local auth-material and key-loading failures
-
-### Engine-facing mapping
+- `MalformedTokenResponse(message, requestId)` for missing or unusable token-response fields, including unusable expiry metadata
+- `UnsupportedTokenType(message, requestId)` when `token_type` is present but not `Bearer`
+- `ClientAssertionSigningFailure(message)` for local signing failures while building `private_key_jwt`
+- `LocalAuthMaterialFailure(message)` for other local auth-material and key-loading failures
 
 `ExtensionServiceExternalCallHandler` continues to expose only `statusCode`, `message`, and `requestId`.
 
@@ -581,7 +484,7 @@ Request-id rules:
 
 The current startup-validation wiring is incomplete: `EngineExtensionsConfig` already carries validation-related settings and `ExtensionServiceManager.validateAllExtensions()` exists, but `ParticipantNode` does not currently await it during startup. This design makes startup validation explicit and replaces the current booleans with one global mode while keeping `echoMode` as a test-only bypass.
 
-### Validation mode and result type
+### Validation mode and reports
 
 Introduce one global validation field:
 
@@ -605,7 +508,8 @@ Semantics:
 - `localErrors` are fatal in every mode except `off`
 - `remoteErrors` are fatal only in `strict-remote`
 - `remoteWarnings` never block startup
-- Remote validation failures produced by clients always populate `remoteErrors`. In `best-effort-remote`, `ParticipantNode` downgrades those reported errors only when interpreting the aggregated report; clients should not rewrite them into `remoteWarnings` based on mode.
+- remote validation failures produced by clients always populate `remoteErrors`
+- in `best-effort-remote`, `ParticipantNode` downgrades those reported errors only when interpreting the aggregated report; clients should not rewrite them into `remoteWarnings` based on mode
 
 API rules:
 
@@ -613,21 +517,7 @@ API rules:
 - `ExtensionServiceManager.validateAllExtensions()` returns `Map[String, ExtensionValidationReport]`
 - `ExtensionServiceManager` never decides startup success or failure; `ParticipantNode` interprets the aggregated report against `validation-mode`
 
-### Echo mode
-
-When `echoMode = true`:
-
-- `ExtensionServiceManager` instantiates `EchoExtensionServiceClient` for every extension
-- no HTTP clients, auth providers, token managers, or remote probes are constructed
-- if `validation-mode = off`, `validateAllExtensions()` returns no report
-- otherwise it returns one empty-success report per configured extension:
-  - `localErrors = Seq.empty`
-  - `remoteErrors = Seq.empty`
-  - `remoteWarnings = Seq.empty`
-
-Startup therefore succeeds in every validation mode when `echoMode = true`.
-
-### Validation behavior by mode
+### Validation behavior
 
 - `off`
   - skip startup validation entirely
@@ -655,15 +545,29 @@ Mixed-extension semantics:
 - in remote modes, `auth.mode = none` performs only the resource-server transport probe
 - in remote modes, `auth.mode = oauth` performs real token acquisition plus the resource-server transport probe
 
-### Validation algorithm and remote probe
+### Echo mode
+
+When `echoMode = true`:
+
+- `ExtensionServiceManager` instantiates `EchoExtensionServiceClient` for every extension
+- no HTTP clients, auth providers, token managers, or remote probes are constructed
+- if `validation-mode = off`, `validateAllExtensions()` returns no report
+- otherwise it returns one empty-success report per configured extension:
+  - `localErrors = Seq.empty`
+  - `remoteErrors = Seq.empty`
+  - `remoteWarnings = Seq.empty`
+
+Startup therefore succeeds in every validation mode when `echoMode = true`.
+
+### Validation algorithm and remote probes
 
 Startup algorithm:
 
-1. sort extensions by extension id
-2. run local validation for every extension
-3. record local failures and skip remote validation for those extensions
-4. run the remote checks required by `validation-mode` for the remaining extensions
-5. aggregate results deterministically by extension id
+1. Sort extensions by extension id.
+2. Run local validation for every extension.
+3. Record local failures and skip remote validation for those extensions.
+4. Run the remote checks required by `validation-mode` for the remaining extensions.
+5. Aggregate results deterministically by extension id.
 
 Remote validation must not send a synthetic business request through `/api/v1/external-call`.
 
@@ -679,7 +583,7 @@ Remote probe rules:
 
 No compatibility layer is required for existing users, but the repository still needs an internal migration to the new config and validation model.
 
-### Main implementation areas
+Main implementation areas:
 
 - participant node startup and lifecycle
   - pass `Clock` into `ExtensionServiceManager`
@@ -698,13 +602,12 @@ No compatibility layer is required for existing users, but the repository still 
   - rewrite the outer retry loop around async `FutureUnlessShutdown` composition
   - integrate auth-provider calls and structured auth-failure handling
   - clamp connect and request timeouts to the remaining outer deadline
-- extension service interface
+- extension service interface and helpers
   - replace `ExtensionValidationResult` with `ExtensionValidationReport`
-- new supporting code
   - add the auth package
   - add a transport-validation helper
 
-### Repo-wide migration work
+Repo-wide migration work:
 
 - update participant test fixtures and helpers that construct `ExtensionServiceConfig` directly
 - update external-call integration tests to use the new endpoint and auth config shape
