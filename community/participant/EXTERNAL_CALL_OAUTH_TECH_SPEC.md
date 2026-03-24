@@ -716,7 +716,7 @@ The current startup-validation wiring is incomplete:
 
 The final design makes startup validation explicit rather than describing it as already wired.
 
-For OAuth-enabled extensions, validation remains globally controlled through `EngineExtensionsConfig`, and this change replaces the current booleans with one final mode field:
+For OAuth-enabled extensions, validation remains globally controlled through `EngineExtensionsConfig`, and this change replaces the current validation booleans with one final mode field while retaining the existing test-only `echoMode` toggle:
 
 - `validation-mode = off | local | best-effort-remote | strict-remote`
 
@@ -726,6 +726,14 @@ Wiring rule:
 - before the participant exposes services, `ParticipantNode` invokes `validateAllExtensions()`
 - `ExtensionServiceManager` executes the checks implied by `validation-mode`
 - startup failure is derived solely from `validation-mode`, not from a second fail/ignore boolean
+
+Echo-mode rule:
+
+- `EngineExtensionsConfig.echoMode` remains in the final design as a test-only bypass
+- when `echoMode = true`, `ExtensionServiceManager` instantiates `EchoExtensionServiceClient` for every configured extension and does not construct HTTP clients, auth providers, token managers, or remote-validation probes for those extensions
+- in echo mode, `validateAllExtensions()` still returns one `ExtensionValidationReport` per configured extension, but each report is empty-success: `localErrors = Seq.empty`, `remoteErrors = Seq.empty`, `remoteWarnings = Seq.empty`
+- therefore startup succeeds in every `validation-mode` when `echoMode = true`
+- the OAuth behavior specified in this document applies only when `echoMode = false`
 
 Validation result shape:
 
@@ -893,7 +901,7 @@ Required migration steps:
 - update participant test fixtures and helpers that construct `ExtensionServiceConfig` directly
 - update external-call integration tests to build the new endpoint/auth config shape
 - update config snippets, sample configs, and documentation-backed test resources that use legacy extension config fields
-- replace `EngineExtensionsConfig.validateExtensionsOnStartup` / `failOnExtensionValidationError` with the final `validationMode` field throughout config parsing and tests
+- replace `EngineExtensionsConfig.validateExtensionsOnStartup` / `failOnExtensionValidationError` with the final `validationMode` field throughout config parsing and tests, while retaining `echoMode`
 - replace any tests that assume `_health`-based validation with tests for the structured validation report and transport-only probing
 - remove legacy static-token and `tlsInsecure` assumptions from external-call-specific tests
 
@@ -907,7 +915,7 @@ Required migration steps:
   - register `ExtensionServiceManager` in the node closeable set
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/config/ExtensionServiceConfig.scala`
   - replace the legacy transport/auth fields with an explicit endpoint and auth config model
-  - replace the current validation booleans with one global validation-mode enum
+  - replace the current validation booleans with one global validation-mode enum while retaining `echoMode` as a test-only bypass
 - `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionServiceManager.scala`
   - stop relying on one globally shared `HttpClient` for all auth/TLS cases
   - instantiate resolved auth providers
@@ -982,3 +990,4 @@ The following design choices are settled for this draft:
 4. `private_key_jwt` client authentication supports RSA keys in DER/PKCS8 format.
 5. The token response must provide usable expiry metadata. Providers that do not provide it are rejected.
 6. Auth validation mode is configured globally through one `EngineExtensionsConfig.validationMode` setting introduced by this change.
+7. `EngineExtensionsConfig.echoMode` remains as a test-only bypass; when enabled, external-call clients are echo clients and OAuth/HTTP validation is skipped by returning empty-success validation reports.
