@@ -220,11 +220,13 @@ Validation responsibility is split as follows:
 
 Foreground timeout rule:
 
+- every foreground HTTP connect attempt is bounded by `connect-timeout`
 - every foreground token-endpoint HTTP attempt must clamp its timeout to `min(request-timeout, remaining max-total-timeout budget)`
 - if no budget remains, token acquisition fails immediately and the business request is not sent
 
 Background timeout rule:
 
+- background HTTP connect attempts use `connect-timeout`
 - background refresh reuses the same per-attempt `request-timeout` cap
 - background refresh never borrows time from a business request and never extends a completed request path
 
@@ -251,6 +253,50 @@ Implementation rule:
 
 - the resource-server endpoint block uses existing `FullClientConfig` / `ClientConfig` field vocabulary and config readers
 - the token-endpoint block uses the same field vocabulary plus `path`
+
+### Transport lifecycle settings
+
+The final config preserves the current transport-lifecycle knobs explicitly.
+
+Business-request transport settings remain top-level extension settings:
+
+- `connect-timeout`
+- `request-timeout`
+- `max-total-timeout`
+- `max-retries`
+- `retry-initial-delay`
+- `retry-max-delay`
+
+Ownership of those settings is:
+
+- `connect-timeout`
+  - remains a transport setting
+  - applies to HTTP client connection establishment for both the resource server client and the token endpoint client
+- `request-timeout`
+  - remains a per-attempt HTTP timeout
+  - applies to both resource-server requests and token-endpoint requests
+- `max-total-timeout`
+  - remains the outer budget for one business external-call operation
+  - applies to the business request and any foreground token acquisition done on behalf of that request
+- `max-retries`
+  - remains the outer business-request retry limit owned by `HttpExtensionServiceClient`
+- `retry-initial-delay`
+  - remains the initial backoff delay for outer business-request retries
+- `retry-max-delay`
+  - remains the cap for outer business-request retry delay
+
+Auth token lifecycle retries are configured separately under `auth.oauth.token-manager` through `AuthenticationTokenManagerConfig`:
+
+- `refresh-auth-token-before-expiry`
+- `retries`
+- `min-retry-interval`
+- optional exponential-backoff settings from `AuthenticationTokenManagerConfig`
+
+This split is intentional:
+
+- extension-level retry knobs govern replay of business calls to the resource server
+- token-manager retry knobs govern acquisition and refresh of OAuth tokens
+- no existing transport knob is silently removed or folded into a default
 
 ### Auth modes
 
@@ -304,9 +350,12 @@ extensions = {
       }
     }
 
+    connect-timeout = 500ms
     request-timeout = 8s
     max-total-timeout = 25s
     max-retries = 3
+    retry-initial-delay = 1s
+    retry-max-delay = 10s
     request-id-header = "X-Request-Id"
   }
 }
@@ -437,11 +486,17 @@ Composition rule:
 - both consume the same outer deadline
 - shared retry helpers are limited to pure utility code such as backoff calculation; retry ownership and control flow remain separate
 
+Outer business-request retry timing uses:
+
+- `retry-initial-delay` as the base delay before the first outer retry
+- `retry-max-delay` as the cap for outer retry backoff and `Retry-After` handling
+
 This means foreground token acquisition needs a deadline-aware API. The auth layer cannot assume it has a fresh timeout budget independent from the external call.
 
 Final timeout rule:
 
 - `HttpExtensionServiceClient` computes one absolute deadline from `max-total-timeout`
+- every foreground HTTP connect attempt is bounded by `connect-timeout` and can occur only while outer budget remains
 - every foreground token-endpoint call clamps its timeout to the remaining budget
 - every resource-server call clamps its timeout to the remaining budget
 - neither side may issue a request once the remaining budget is non-positive
