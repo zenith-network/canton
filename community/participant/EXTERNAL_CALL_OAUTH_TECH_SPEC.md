@@ -454,7 +454,7 @@ Accepted security tradeoff:
 
 ### Business call flow
 
-For one external-call attempt:
+For one outer external-call attempt:
 
 1. `HttpExtensionServiceClient` calculates the remaining `maxTotalTimeout` budget.
 2. It asks the auth provider to decorate the resource-server request.
@@ -462,13 +462,15 @@ For one external-call attempt:
    - for `none`, it returns immediately
    - for `oauth`, it synchronously or asynchronously acquires a cached OAuth token using the remaining budget
 4. `HttpExtensionServiceClient` sends the request to `/api/v1/external-call` with the existing business headers unchanged and with the per-attempt timeout clamped to the remaining outer budget.
-5. Response classification happens in two layers:
-   - auth layer decides whether the response means "invalidate auth state"
-   - transport layer decides whether the request may be retried
+5. If the response is not `401`, that response is the outcome of the outer attempt.
+6. If the response is `401`, the auth layer applies the token rejection policy.
+7. The auth layer may perform one auth-local replay inside the same outer attempt.
+8. The final response produced by that auth-local replay, or the original non-`401` response, becomes the outcome of the outer attempt.
+9. The outer retry loop then classifies that outer-attempt outcome as success, retryable failure, or terminal failure.
 
 ### Token rejection policy
 
-The invalidation policy should be explicit:
+The invalidation policy is:
 
 - invalidate cached OAuth token on `401 Unauthorized` from the resource server only if the rejected token still matches the auth provider's current token
 - replay the same business request once with a freshly acquired token, subject to the existing outer timeout budget
@@ -478,6 +480,38 @@ The invalidation policy should be explicit:
 
 This keeps the policy precise while remaining compatible with providers that omit `WWW-Authenticate`.
 
+Exact control flow for `401` is:
+
+1. The initial resource-server call returns `401`.
+2. The auth provider checks whether the rejected token is still the current cached token.
+3. If it is, the auth provider invalidates that cached token.
+4. The auth provider performs foreground token acquisition using the remaining outer deadline.
+5. `HttpExtensionServiceClient` replays the same business request once with the newly acquired token.
+6. No second auth-local replay is allowed inside the same outer attempt.
+
+Outcome handling after the auth-local replay is:
+
+- replay returns `200`
+  - the whole external call succeeds
+- replay returns `401`
+  - the outer attempt ends with terminal `401`
+  - the outer retry loop does not retry
+- replay returns `400`, `403`, or `404`
+  - the outer attempt ends with that terminal response
+  - the outer retry loop does not retry
+- replay returns `408`, `429`, `500`, `502`, `503`, or `504`
+  - that response becomes the outcome of the outer attempt
+  - the outer retry loop treats it exactly like any other retryable outer-attempt failure
+  - if the outer retry loop retries, that consumes one `maxRetries` slot
+- replay fails with a retryable transport exception mapped to `408` or `503`
+  - that mapped failure becomes the outcome of the outer attempt
+  - the outer retry loop treats it exactly like any other retryable outer-attempt failure
+  - if the outer retry loop retries, that consumes one `maxRetries` slot
+- replay fails during foreground token acquisition
+  - that token-acquisition failure becomes the outcome of the outer attempt
+  - the outer retry loop classifies it from the flattened boundary status in the same way as any other outer-attempt failure
+  - if the outer retry loop retries, that consumes one `maxRetries` slot
+
 ### Retry composition
 
 The current outer retry loop in `HttpExtensionServiceClient` remains the only business-request retry loop.
@@ -486,13 +520,23 @@ Composition rule:
 
 - token endpoint retries stay inside the token manager / token client
 - business-request retries stay inside `HttpExtensionServiceClient.callWithRetry`
-- both consume the same outer deadline
+- foreground token acquisition and the resource-server business call consume the same outer deadline
 - shared retry helpers are limited to pure utility code such as backoff calculation; retry ownership and control flow remain separate
 
 Outer business-request retry timing uses:
 
 - `retry-initial-delay` as the base delay before the first outer retry
 - `retry-max-delay` as the cap for outer retry backoff and `Retry-After` handling
+
+Retry accounting rule:
+
+- `maxRetries` counts only completed outer-attempt retries
+- one outer attempt may include:
+  - one initial resource-server request, and
+  - at most one auth-local replay after `401`
+- the auth-local replay does not increment the outer attempt counter and does not consume a `maxRetries` slot
+- any retryable result produced after the auth-local replay is treated as the final result of that outer attempt
+- if the outer loop retries after that result, the outer attempt counter increments once
 
 This means foreground token acquisition needs a deadline-aware API. The auth layer cannot assume it has a fresh timeout budget independent from the external call.
 
