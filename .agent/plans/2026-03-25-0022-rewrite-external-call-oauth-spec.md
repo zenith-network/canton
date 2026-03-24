@@ -16,6 +16,8 @@ After this change, a reader who only has this repository will be able to open `c
 - [x] (2026-03-25 00:22 +04) Captured the settled design decisions that the rewritten spec must encode.
 - [x] (2026-03-25 00:29 +04) Rewrote `community/participant/EXTERNAL_CALL_OAUTH_TECH_SPEC.md` completely so every section matches the settled decisions and current code seams.
 - [x] (2026-03-25 00:31 +04) Reviewed the final spec for obsolete terms and contradictions, then updated this ExecPlan with outcomes and evidence.
+- [x] (2026-03-25 00:42 +04) Revised the spec again so it uses canonical normative wording throughout instead of review-style design prose.
+- [x] (2026-03-25 00:49 +04) Removed the remaining implementation choices from the spec by cementing exact client topology, token-refresh concurrency, token-endpoint transport semantics, trust-store defaults, and metrics policy.
 
 ## Surprises & Discoveries
 
@@ -65,11 +67,19 @@ After this change, a reader who only has this repository will be able to open `c
   Rationale: Extending the current server to handle token-endpoint paths keeps the test harness minimal and aligned with the existing integration suite.
   Date/Author: 2026-03-25 / Codex with user decision
 
+- Decision: The spec text itself MUST be canonical and normative, not explanatory design prose.
+  Rationale: The user requires the spec to be the authoritative implementation contract. That requires direct requirement statements (`MUST`, `MUST NOT`, `MAY`) instead of review framing such as "the goal is", "acceptable", or "current seam".
+  Date/Author: 2026-03-25 / Codex with user decision
+
+- Decision: The canonical spec MUST eliminate implementation choices rather than leaving them as `MAY` or "implementation-specific" behavior.
+  Rationale: The user requires assertive and unconditional wording. The most likely canonical implementation uses one resource client for `auth.type = none`, two dedicated clients for `auth.type = oauth`, serialized per-extension token refresh, exact token-endpoint transport mappings, JVM-default trust stores when no trust collection is configured, and no new OAuth-specific metrics.
+  Date/Author: 2026-03-25 / Codex with user decision
+
 ## Outcomes & Retrospective
 
-The spec rewrite is complete. `community/participant/EXTERNAL_CALL_OAUTH_TECH_SPEC.md` now describes a narrower OAuth v1 design that aligns with the current participant extension code instead of describing a broader transport/config/startup redesign. The new document keeps OAuth inside `HttpExtensionServiceClient`, keeps one OAuth-specific `401` refresh-and-replay, keeps the resource-server configuration broadly flat, uses a typed auth variant, defers startup validation integration, and reuses the existing `MockExternalCallServer` for integration tests.
+The spec rewrite is complete. `community/participant/EXTERNAL_CALL_OAUTH_TECH_SPEC.md` now describes a narrower OAuth v1 design that aligns with the current participant extension code instead of describing a broader transport/config/startup redesign. The final document is also written as a canonical normative specification rather than a reviewed design memo. It keeps OAuth inside `HttpExtensionServiceClient`, keeps one OAuth-specific `401` refresh-and-replay, keeps the resource-server configuration broadly flat, uses a typed auth variant, defers startup validation integration, and reuses the existing `MockExternalCallServer` for integration tests.
 
-The rewrite also removed the biggest mismatches from the old draft. The old nested `endpoint` resource-server example is gone, the separate startup-validation section is gone, and the token-request `audience` field is now explicitly out of scope. The remaining contrast with `auth.mode` appears only once in the config section to explain the chosen typed-auth replacement.
+The rewrite also removed the biggest mismatches from the old draft. The old nested `endpoint` resource-server example is gone, the separate startup-validation section is gone, and the token-request `audience` field is now explicitly out of scope. The final revisions removed design-review phrasing and then removed the remaining implementation choices by fixing exact behavior where the prior draft still allowed discretion.
 
 This was a documentation-only change. No runtime code or tests were changed in this turn, so the proof of success is the rewritten spec content plus the search and diff evidence recorded below.
 
@@ -162,6 +172,12 @@ Validation evidence from the completed rewrite:
     => one deliberate contrast-only match:
        282: OAuth v1 uses a typed auth variant rather than `auth.mode` plus an optional nested OAuth block.
 
+    rg -n '\b(goal|acceptable|continues|should|conceptually|intentionally)\b' community/participant/EXTERNAL_CALL_OAUTH_TECH_SPEC.md -S
+    => only the RFC-style keyword convention line contains "SHOULD"
+
+    rg -n '\bMAY\b|when possible|implementation-specific|broadly|optional ' community/participant/EXTERNAL_CALL_OAUTH_TECH_SPEC.md -S
+    => no matches
+
 ## Interfaces and Dependencies
 
 The rewritten spec must refer to the following repository interfaces and preserve their current responsibilities unless it explicitly proposes a change:
@@ -184,3 +200,7 @@ The rewritten spec must refer to the following repository interfaces and preserv
 Change note: This ExecPlan was created to guide a full rewrite of `community/participant/EXTERNAL_CALL_OAUTH_TECH_SPEC.md` after a code-grounded review showed that the existing spec mixed correct runtime goals with config and startup behavior that the current codebase does not support. The plan resolves those mismatches up front so the new spec can be written once and read independently.
 
 Revision note: After completing the rewrite, this plan was updated to mark all work complete, record the validation evidence, and summarize the documentation outcome so a future reader can restart from this file alone.
+
+Revision note: After the user required canonical wording, this plan was updated again to record the normative-language revision and the final validation checks that distinguish requirement text from explanatory prose.
+
+Revision note: After the user required unconditional canonicality, this plan was updated again to record the final pass that removed the remaining implementation choices from the spec.

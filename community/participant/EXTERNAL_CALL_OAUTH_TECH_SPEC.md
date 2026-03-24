@@ -1,271 +1,309 @@
-# External Call OAuth Tech Spec
+# External Call OAuth Specification
 
-## Purpose and Scope
+## Normative Conventions
 
-This document defines OAuth-based service-to-service authentication for participant
-`external_call` requests.
+The key words `MUST` and `MUST NOT` are normative.
 
-The goal is to let a participant call an external extension service using OAuth 2.0 client
-credentials with `private_key_jwt`, without changing the Daml-level business protocol. After this
-change, a Daml program still sends the same `(extensionId, functionId, configHash, input, mode)`
-inputs through the existing participant extension seam, and the extension still returns either a
-successful business response body or an error described by HTTP status, message, and request ID.
+## Scope
 
-This spec is intentionally narrow. It adds OAuth inside the existing `external_call` runtime seam.
-It does not introduce a general auth subsystem, a general transport abstraction, or a new startup
-validation feature.
+The participant `external_call` implementation MUST support OAuth 2.0 service-to-service
+authentication using:
 
-## Baseline Assumptions
+- `grant_type = client_credentials`
+- client authentication by `private_key_jwt`
+- bearer access tokens
 
-- OAuth remains configured per extension.
-- OAuth changes transport and authentication behavior only. It does not change Daml business
-  semantics.
-- The existing static bearer-token fields (`jwt` and `jwtFile`) can be replaced rather than carried
-  indefinitely for compatibility.
-- Sender-constrained mechanisms such as mTLS-bound access tokens are out of scope.
-- Background token refresh is out of scope.
-- Startup validation and participant startup gating are out of scope for OAuth v1.
+The implementation MUST preserve the existing Daml-level business protocol. The implementation MUST
+NOT change the Daml-visible inputs `(extensionId, functionId, configHash, input, mode)`. The
+implementation MUST NOT change the successful business response body format. The implementation MUST
+surface OAuth failures only through the existing external-call transport error boundary.
 
-## Determinism Requirement
+OAuth configuration MUST remain per extension.
 
-For a fixed `(extensionId, functionId, configHash, input)`, successful business responses must be
+The implementation MUST replace the existing static bearer-token fields `jwt` and `jwtFile`. The
+implementation MUST NOT retain those fields as the long-term supported auth model.
+
+The implementation MUST NOT introduce:
+
+- a general auth-provider subsystem
+- a general transport abstraction for participant extensions
+- startup validation integration or participant startup gating as part of OAuth v1
+- token-request `audience`
+- sender-constrained tokens or mTLS-bound access tokens
+- proactive or background token refresh
+- hot reload of OAuth key material or trust material
+
+## Determinism
+
+For a fixed `(extensionId, functionId, configHash, input)`, successful business responses MUST be
 identical in `submission` and `validation`.
 
-Rules:
+The implementation MUST forward `mode` unchanged on the existing wire contract.
 
-- `mode` remains forwarded unchanged on the existing wire contract.
-- Access-token claims, client-assertion timestamps, `jti`, token expiry bookkeeping, and OAuth
-  client identity are transport concerns only. They must not become business inputs.
-- OAuth failures must surface only as external-call transport errors through the existing error
-  boundary.
+The implementation MUST treat the following as transport state only and MUST NOT use them as
+business inputs:
 
-## Current Code Seam
+- access-token claims
+- client-assertion timestamps
+- `jti`
+- token expiry bookkeeping
+- OAuth client identity
 
-The current participant extension flow is:
+## Repository Boundary
 
-1. `community/participant/src/main/scala/com/digitalasset/canton/participant/ParticipantNode.scala`
-   creates one `ExtensionServiceManager` when `parameters.engine.extensions` is non-empty.
-2. `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionServiceManager.scala`
-   creates one `HttpExtensionServiceClient` per configured extension.
-3. `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionServiceExternalCallHandler.scala`
-   forwards Daml engine external calls to the manager.
-4. `community/participant/src/main/scala/com/digitalasset/canton/participant/extension/HttpExtensionServiceClient.scala`
-   builds the HTTP request, injects authentication, performs retries, and maps failures into
-   `ExtensionCallError`.
+The implementation MUST preserve the existing repository seam.
 
-Current implementation constraints that the OAuth design must preserve:
+`community/participant/src/main/scala/com/digitalasset/canton/participant/ParticipantNode.scala`
+MUST instantiate `ExtensionServiceManager` when `parameters.engine.extensions` is non-empty.
 
-- `ExtensionServiceExternalCallHandler` only exposes `statusCode`, `message`, and `requestId` to
-  the Daml engine.
-- `HttpExtensionServiceClient.callWithRetry` is the existing outer retry boundary.
-- The existing resource-server protocol stays unchanged:
-  - path: `/api/v1/external-call`
-  - headers: `X-Daml-External-Function-Id`, `X-Daml-External-Config-Hash`,
-    `X-Daml-External-Mode`, and the configured request ID header
-  - request body and successful response body remain the existing hex-encoded business payloads
-- The current retry classification stays in force for the outer loop:
-  - terminal: `400`, `401`, `403`, `404`
-  - retryable: `408`, `429`, `500`, `502`, `503`, `504`
+`community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionServiceManager.scala`
+MUST instantiate one `HttpExtensionServiceClient` per configured extension and MUST route calls by
+extension ID.
 
-## Target Runtime Design
+`community/participant/src/main/scala/com/digitalasset/canton/participant/extension/ExtensionServiceExternalCallHandler.scala`
+MUST remain a thin mapper from extension errors to `ExternalCallError` and MUST expose only:
 
-### Ownership
+- `statusCode`
+- `message`
+- `requestId`
 
-OAuth stays inside `HttpExtensionServiceClient`. That class remains the sole owner of:
+`community/participant/src/main/scala/com/digitalasset/canton/participant/extension/HttpExtensionServiceClient.scala`
+MUST own:
 
 - request orchestration
 - token acquisition
 - token caching
-- the existing outer retry loop
-- the single OAuth-specific `401` refresh-and-replay
-- request and error mapping
+- the outer retry loop
+- the OAuth-specific `401` refresh-and-replay
+- error mapping
 
-`ExtensionServiceManager` continues to create one client per configured extension and route calls by
-extension ID. It does not become an auth provider, token manager, or shared transport layer.
+The implementation MUST NOT move those responsibilities into `ExtensionServiceManager`.
 
-Each `HttpExtensionServiceClient` owns the outbound HTTP client state for its extension. It may use
-one or two Java `HttpClient` instances internally:
+## Resource-Server Protocol
 
-- one client for resource-server calls
-- one client for token-endpoint calls when the token endpoint uses different TLS trust settings
+The implementation MUST preserve the existing resource-server protocol:
 
-If resource-server and token-endpoint TLS settings are identical, reusing a single client inside the
-extension client is acceptable. Cross-extension sharing is not required and should not be assumed.
+- HTTP method MUST remain `POST`
+- HTTP path MUST remain `/api/v1/external-call`
+- `Content-Type` MUST remain `application/octet-stream`
+- `X-Daml-External-Function-Id` MUST carry `functionId`
+- `X-Daml-External-Config-Hash` MUST carry `configHash`
+- `X-Daml-External-Mode` MUST carry `mode`
+- the configured request ID header MUST carry the participant-generated request ID
+- the request body MUST remain the existing business payload
+- the successful response body MUST remain the existing business payload
 
-`ExtensionServiceExternalCallHandler` remains unchanged as a thin boundary mapper.
+When OAuth is enabled, the implementation MUST add `Authorization: Bearer <token>` to the resource
+request. When OAuth is disabled, the implementation MUST NOT add that header.
 
-No background refresh task is introduced.
+## HTTP Client Ownership
 
-### Request Execution, Retries, and Deadlines
+Each `HttpExtensionServiceClient` MUST own the outbound HTTP client state for its extension.
 
-`HttpExtensionServiceClient` keeps the existing outer retry model. OAuth does not add a second outer
-retry policy.
+When `auth.type = none`, the extension client MUST create exactly one internal Java `HttpClient`
+dedicated to resource-server calls.
 
-For one external-call operation, the client computes one absolute deadline from
-`max-total-timeout` before the first outer attempt. The client never starts token acquisition or a
-resource request once the remaining budget is non-positive.
+When `auth.type = oauth`, the extension client MUST create exactly two internal Java `HttpClient`
+instances:
 
-One outer attempt is:
+- one dedicated to resource-server calls
+- one dedicated to token-endpoint calls
 
-1. Compute the remaining total budget from the fixed absolute deadline.
-2. Resolve authentication:
-   - `auth.type = none`: no auth work is performed.
-   - `auth.type = oauth`: obtain a valid access token against the same remaining budget.
-3. Build the resource request for `/api/v1/external-call` with the existing
-   `X-Daml-External-*` headers unchanged. When OAuth is enabled, add
-   `Authorization: Bearer <token>`.
-4. Apply the request timeout for that outbound request as
+The implementation MUST NOT require cross-extension HTTP client sharing.
+
+## Retry and Deadline Model
+
+`HttpExtensionServiceClient.callWithRetry` MUST remain the only business-request retry loop.
+
+The outer retry classification MUST remain:
+
+- terminal: `400`, `401`, `403`, `404`
+- retryable: `408`, `429`, `500`, `502`, `503`, `504`
+
+For one external-call operation, the implementation MUST compute one absolute deadline from
+`max-total-timeout` before the first outer attempt.
+
+The implementation MUST NOT start token acquisition or a resource request when the remaining budget
+is non-positive.
+
+`maxRetries` MUST count only outer retries.
+
+One outer attempt MUST execute as follows:
+
+1. The implementation MUST compute the remaining budget from the fixed absolute deadline.
+2. The implementation MUST resolve auth:
+   - `auth.type = none`: the implementation MUST skip auth work.
+   - `auth.type = oauth`: the implementation MUST obtain a valid access token against the same
+     remaining budget.
+3. The implementation MUST build the resource request with the preserved resource-server protocol.
+4. The implementation MUST apply request timeout as
    `min(configured request-timeout, remaining budget)`.
-5. Send the resource request.
-6. If the resource response is not `401`, that response is the outcome of the outer attempt.
+5. The implementation MUST send the resource request.
+6. If the resource response is not `401`, that response MUST be the outcome of the outer attempt.
 7. If the resource response is `401` and OAuth is enabled:
-   - invalidate the cached token only if it is the same token that was attached to the rejected
-     request
-   - obtain a fresh token against the same outer deadline
-   - replay the resource request once with the fresh token
-8. Feed the replay result, or the original non-`401` result, back into the existing outer retry
-   loop.
+   - the implementation MUST invalidate the cached token only if it is the same token that was sent
+     on the rejected request
+   - the implementation MUST obtain a fresh token against the same outer deadline
+   - the implementation MUST replay the resource request exactly once with the fresh token
+8. The implementation MUST feed the replay result, or the original non-`401` result, back into the
+   existing outer retry loop.
 
-Rules:
+The auth-local replay MUST NOT consume a `maxRetries` slot.
 
-- `callWithRetry` remains the only business-request retry loop.
-- `maxRetries` counts only outer retries.
-- One outer attempt may include one initial resource request and at most one auth-local replay.
-- The auth-local replay does not consume a `maxRetries` slot.
-- `401` is the only resource response that triggers OAuth-specific recovery after a resource request
-  has already been sent.
-- After the auth-local replay, normal status handling resumes:
-  - `200` succeeds
-  - `400`, `401`, `403`, and `404` are terminal
-  - `408`, `429`, `500`, `502`, `503`, and `504` remain outer-loop retryable outcomes
-- `connect-timeout` is a fixed per-extension client setting used when constructing the internal
-  HTTP client or clients.
-- OAuth v1 clamps per-request `request-timeout` to the remaining total budget, but it does not
-  require dynamic per-attempt connect-timeout clamping.
+`401` MUST be the only resource response that triggers OAuth-specific recovery after a resource
+request has been sent.
 
-### Resource Request Details
+After the auth-local replay, the implementation MUST resume normal status handling:
 
-The resource-server wire contract is unchanged.
+- `200` MUST succeed
+- `400`, `401`, `403`, and `404` MUST be terminal
+- `408`, `429`, `500`, `502`, `503`, and `504` MUST remain retryable through the outer loop
 
-The participant continues to:
+`connect-timeout` MUST be a fixed per-extension client setting. OAuth v1 MUST clamp per-request
+`request-timeout` to the remaining total budget. OAuth v1 MUST NOT require dynamic per-attempt
+connect-timeout clamping.
 
-- generate a request ID for each outbound HTTP interaction
-- place that ID in the configured `request-id-header`
-- send `functionId`, `configHash`, and `mode` through the existing `X-Daml-External-*` headers
+## Token Cache
 
-The resource request body and successful response body remain the existing business payloads.
-OAuth only adds the `Authorization` header when `auth.type = oauth`.
+OAuth token caching MUST be on-demand.
 
-## Token Acquisition and Caching
+The implementation MUST satisfy all of the following:
 
-### Cache Model
-
-OAuth uses simple on-demand token caching.
-
-Rules:
-
-- A cached access token may be reused while the client still considers it unexpired according to
-  the locally computed expiry instant.
-- An expired cached token is replaced on the next business request that needs OAuth.
-- A cached token rejected by the resource server with `401` is invalidated for one refresh-and-
+- A cached access token MUST be reused while the client considers it unexpired.
+- An expired cached token MUST be replaced on the next business request that requires OAuth.
+- A cached token rejected by the resource server with `401` MUST be invalidated for one refresh-and-
   replay attempt.
-- There is no proactive refresh and no background work.
-- Synchronization of concurrent cache misses is an implementation detail, not part of the public
-  contract.
+- The implementation MUST NOT perform proactive refresh.
+- The implementation MUST NOT run a background refresh task.
 
-### Token Request
+Concurrent cache misses for the same extension MUST be serialized so that at most one token
+acquisition is in flight per extension at a time.
 
-Token acquisition uses OAuth 2.0 client credentials with `private_key_jwt`.
+When one request is already refreshing the token for an extension, other concurrent requests for the
+same extension MUST wait for that refresh result instead of starting a second token acquisition.
 
-The token request uses:
+## Token Request
+
+The token request MUST use OAuth 2.0 client credentials with `private_key_jwt`.
+
+The token request MUST use HTTP `POST`.
+
+The token request MUST use `Content-Type: application/x-www-form-urlencoded`.
+
+The implementation MUST generate a participant request ID for each token-endpoint HTTP interaction.
+
+The implementation MUST attach that request ID using the configured `request-id-header`.
+
+The token request MUST include:
 
 - `grant_type = client_credentials`
 - `client_assertion_type = urn:ietf:params:oauth:client-assertion-type:jwt-bearer`
 - `client_assertion = <signed JWT>`
-- optional `scope` when configured
 
-No token-request `audience` field is supported in v1.
+If `scope` is configured, the token request MUST include `scope`.
 
-The participant treats access tokens as opaque bearer tokens. It does not parse or locally verify
-access-token claims.
+If `scope` is not configured, the token request MUST omit `scope`.
 
-Required token response fields are:
+The token request MUST NOT include token-request `audience`.
+
+The implementation MUST treat access tokens as opaque bearer tokens. The implementation MUST NOT
+parse or locally verify access-token claims.
+
+The token response MUST contain:
 
 - `access_token`
 - `token_type`
 - `expires_in`
 
-Rules:
+The implementation MUST reject the token response unless `token_type` equals `Bearer`,
+case-insensitively.
 
-- `token_type` must be `Bearer`, matched case-insensitively.
-- `expires_in` is used to compute the local expiry instant for cache reuse.
-- Missing or malformed required fields are treated as a malformed token response.
+The implementation MUST use `expires_in` to compute the local expiry instant used for cache reuse.
 
-### Client Assertion
+A token response with missing or malformed required fields MUST be treated as malformed.
 
-The client assertion for `private_key_jwt` uses:
+## Client Assertion
 
-- signing algorithm: `RS256`
-- optional `kid` when configured
-- claims:
-  - `iss = client-id`
-  - `sub = client-id`
-  - `aud = <token-endpoint URI>`
-  - `iat = now`
-  - `exp = now + 30s`
-  - `jti = <fresh random identifier>`
+The `private_key_jwt` client assertion MUST use:
 
-Assertions are one-use only and are never logged or persisted.
+- signing algorithm `RS256`
+- `iss = client-id`
+- `sub = client-id`
+- `aud = <token-endpoint URI>`
+- `iat = now`
+- `exp = now + 30s`
+- `jti = <fresh random identifier>`
 
-Supported signing-key format for v1 is RSA DER / PKCS#8.
+If `key-id` is configured, the implementation MUST include `kid`.
 
-### Key and Trust Material
+If `key-id` is not configured, the implementation MUST omit `kid`.
 
-Key and trust material are loaded when the `HttpExtensionServiceClient` is constructed rather than
-re-read on every token request.
+Each assertion MUST be one-use only.
 
-Consequences:
+The implementation MUST NOT log or persist client assertions.
 
-- key rotation takes effect on participant restart
-- trust-material changes take effect on participant restart
-- hot reload of OAuth key material is out of scope
+The supported signing-key format for v1 MUST be RSA DER / PKCS#8.
 
-### Token-Endpoint Failures
+## Key and Trust Material
 
-Token-endpoint failures consume the same outer retry budget as resource-server failures. OAuth does
-not introduce a second retry policy.
+The implementation MUST load signing-key and trust material during
+`HttpExtensionServiceClient` construction.
 
-Handling rules:
+The implementation MUST NOT re-read signing-key or trust material on each token request.
 
-- Token-endpoint HTTP responses preserve their HTTP status code when possible.
-- Token-endpoint `408`, `429`, `500`, `502`, `503`, and `504` are outer-loop retryable because they
-  feed into the existing status-based retry logic.
-- Token-endpoint `400`, `401`, `403`, and `404` are terminal because they feed into the existing
-  status-based terminal classification.
-- Transient connect failures, request timeouts, and I/O failures are mapped into the same status
-  families already used by `HttpExtensionServiceClient` for resource-server calls.
-- Malformed token responses map to `502`.
-- Local signing, key-loading, and local auth-material failures map to `500`.
+The implementation MUST assume that key rotation and trust-material rotation take effect only after
+participant restart.
 
-## Configuration
+## Token-Endpoint Failures
 
-### Design Goals
+Token-endpoint failures MUST consume the same outer retry budget as resource-server failures.
 
-The configuration change must stay close to the current
+OAuth v1 MUST NOT define a second retry policy.
+
+For any token-endpoint HTTP response, the implementation MUST preserve the exact HTTP status code in
+the resulting `ExtensionCallError`.
+
+The implementation MUST classify token-endpoint HTTP failures as follows:
+
+- `408`, `429`, `500`, `502`, `503`, and `504` MUST be retryable through the existing outer retry
+  loop
+- `400`, `401`, `403`, and `404` MUST be terminal through the existing outer retry loop
+
+Transient token-endpoint failures MUST map as follows:
+
+- token-endpoint request timeout: `408`
+- token-endpoint connect failure: `503`
+- token-endpoint I/O failure: `503`
+- token-endpoint unexpected local exception: `500`
+
+Malformed token responses MUST map to `502`.
+
+Local signing, key-loading, and local auth-material failures MUST map to `500`.
+
+## Configuration Model
+
+The configuration model MUST stay close to the current
 `community/participant/src/main/scala/com/digitalasset/canton/participant/config/ExtensionServiceConfig.scala`
-shape. OAuth adds an auth block, not a general transport refactor.
+shape.
 
-### Resource-Server Configuration
+The implementation MUST add an auth model. The implementation MUST NOT introduce a broad transport
+configuration abstraction for participant extensions.
 
-The resource-server fields stay broadly flat on `ExtensionServiceConfig`.
+### Resource-Server Fields
 
-The top-level per-extension config continues to carry:
+The per-extension configuration MUST expose resource-server endpoint fields directly at the top
+level.
+
+The per-extension configuration MUST NOT nest the resource-server endpoint under an `endpoint`
+block.
+
+The top-level per-extension config MUST carry:
 
 - `name`
 - `host`
 - `port`
 - `use-tls`
-- optional `trust-collection-file` for the resource server
+- `trust-collection-file` for the resource server when custom trust material is required
 - `connect-timeout`
 - `request-timeout`
 - `max-total-timeout`
@@ -275,53 +313,66 @@ The top-level per-extension config continues to carry:
 - `request-id-header`
 - `declared-functions`
 
-The legacy static token fields `jwt` and `jwtFile` are replaced by a typed auth config.
+### Auth Fields
 
-### Auth Configuration
+The auth configuration MUST be a typed variant. The implementation MUST NOT use `auth.mode` plus a
+nested OAuth block.
 
-OAuth v1 uses a typed auth variant rather than `auth.mode` plus an optional nested OAuth block.
-
-Conceptually:
+The auth configuration MUST support:
 
 - `auth.type = none`
 - `auth.type = oauth`
 
-`auth.type = none` means no `Authorization` header is sent.
+`auth.type = none` MUST disable auth header injection.
 
-`auth.type = oauth` contains:
+`auth.type = oauth` MUST contain:
 
 - `token-endpoint`
   - `host`
   - `port`
   - `path`
-  - optional `trust-collection-file`
+  - `trust-collection-file` when custom trust material is required
 - `client-id`
 - `private-key-file`
-- optional `key-id`
-- optional `scope`
+- `key-id` when `kid` emission is required
+- `scope` when the token endpoint requires scope
 
-Rules:
+When `auth.type = oauth`, the resource server MUST use TLS.
 
-- When `auth.type = oauth`, the resource server must use TLS.
-- When `auth.type = oauth`, the token endpoint must use TLS.
-- The existing insecure / trust-all TLS support remains test-only scaffolding and is not part of the
-  supported OAuth contract.
-- The token endpoint path must start with `/` and must not contain a query string or fragment.
-- The token-endpoint URI is used both as the HTTP target and as the `aud` claim in the client
-  assertion.
-- A separate assertion-audience override is out of scope.
+When `auth.type = oauth`, the token endpoint MUST use TLS.
+
+When a TLS endpoint omits `trust-collection-file`, the implementation MUST use the JVM default
+trust store for that endpoint.
+
+The token endpoint path MUST start with `/`.
+
+The token endpoint path MUST NOT contain a query string.
+
+The token endpoint path MUST NOT contain a fragment.
+
+The implementation MUST use the token-endpoint URI both as:
+
+- the HTTP target for token acquisition
+- the `aud` claim in the client assertion
+
+The implementation MUST NOT support a separate assertion-audience override in v1.
+
+The implementation MUST treat insecure or trust-all TLS behavior as test-only scaffolding. The
+canonical OAuth contract MUST NOT rely on insecure TLS.
 
 ### Global Extension Settings
 
-OAuth v1 does not change the role of `EngineExtensionsConfig`.
+The OAuth v1 specification MUST leave `EngineExtensionsConfig` behavior unchanged except where the
+existing `echoMode` short-circuit already applies.
 
-Rules:
+`echoMode` MUST continue to short-circuit HTTP calls.
 
-- `echoMode` continues to short-circuit HTTP calls.
-- Existing validation-related settings are left untouched by this spec, but OAuth v1 does not
-  define new startup validation behavior around them.
+The OAuth v1 specification MUST NOT define startup validation semantics for
+`validateExtensionsOnStartup` or `failOnExtensionValidationError`.
 
-### Example Config
+## Example Configuration
+
+The canonical configuration shape MUST be:
 
 ```hocon
 extensions = {
@@ -360,103 +411,113 @@ extensions = {
 }
 ```
 
-## Error Handling
+## Error Mapping
 
-The OAuth feature keeps the existing error boundary shape.
+The OAuth implementation MUST preserve the existing external-call error boundary.
 
-Rules:
+Internal OAuth failures MUST map to `ExtensionCallError`.
 
-- Internal OAuth failures are mapped directly to `ExtensionCallError`.
-- `ExtensionServiceExternalCallHandler` continues to expose only `statusCode`, `message`, and
-  `requestId`.
-- Resource-server transport and application failures keep the existing status and message mapping
-  already used by `HttpExtensionServiceClient`.
+`ExtensionServiceExternalCallHandler` MUST continue to expose only:
 
-Mapping rules for OAuth-specific failures:
+- `statusCode`
+- `message`
+- `requestId`
 
-- Token-endpoint HTTP failures preserve their HTTP status code when possible.
-- Malformed token responses map to `502`.
-- Local signing, key-loading, and local auth-material failures map to `500`.
-- After the auth-local replay is exhausted, a resource-server token rejection maps to `401` with
-  message `Unauthorized - OAuth token rejected by resource server`.
+Resource-server transport and application failures MUST preserve the existing mapping already used
+by `HttpExtensionServiceClient`.
 
-Request ID rule:
+The implementation MUST apply the following OAuth-specific mappings:
 
-- Return the request ID of the outbound HTTP interaction that produced the returned error.
-- If token acquisition fails before any HTTP request is sent, return `None`.
+- token-endpoint HTTP failure: preserve the exact HTTP status code
+- malformed token response: `502`
+- local signing failure: `500`
+- local key-loading failure: `500`
+- local auth-material failure: `500`
+- resource-server token rejection after the auth-local replay is exhausted: `401` with message
+  `Unauthorized - OAuth token rejected by resource server`
 
-## Observability
+The returned `requestId` MUST be the request ID of the outbound HTTP interaction that produced the
+returned error.
 
-Logging should be added for:
+If token acquisition fails before any HTTP request is sent, the returned `requestId` MUST be
+`None`.
+
+## Logging and Metrics
+
+The implementation MUST emit structured logs for:
 
 - token acquisition start
-- token acquisition success and failure
-- cache reuse versus token reacquisition
+- token acquisition success
+- token acquisition failure
+- cache reuse
+- token reacquisition
 - token invalidation after resource-server `401`
 - final external-call failure classification
 
-Sensitive material must never be logged:
+The implementation MUST NOT log:
 
 - access tokens
 - client assertions
 - private key material
 - token-endpoint request bodies
 
-OAuth-specific metrics are optional. The feature does not depend on adding new metrics.
+The canonical OAuth v1 implementation defines no OAuth-specific metrics.
 
-## Testing
+The implementation MUST NOT depend on new metrics for correctness or acceptance.
 
-OAuth changes runtime request flow, so the tests must cover both unit behavior and end-to-end
-integration behavior.
+## Test Requirements
 
-### Unit Tests
+The implementation MUST add or update unit tests for:
 
-Add or update unit tests around:
-
-- auth config parsing for typed auth variants
+- typed auth config parsing
 - token request construction
 - client assertion construction
-- token acquisition success and failure
+- token acquisition success
+- token acquisition failure
 - cache reuse
 - expiry-driven reacquisition
 - `401` invalidate-and-replay
-- key-loading and trust-material failures
+- key-loading failures
+- trust-material failures
 
-Whenever a bug is found during implementation, add a regression unit test for the failing scenario.
+If implementation work uncovers a bug, the implementation MUST add a regression unit test for that
+failing scenario.
 
-### Integration Tests
-
-Reuse the existing external-call integration harness:
+The implementation MUST reuse the existing external-call integration harness:
 
 - `community/app/src/test/scala/com/digitalasset/canton/integration/tests/externalcall/ExternalCallIntegrationTestBase.scala`
 - `community/app/src/test/scala/com/digitalasset/canton/integration/tests/externalcall/MockExternalCallServer.scala`
 
-The existing `MockExternalCallServer` should be extended so it can serve both:
+`MockExternalCallServer` MUST be extended to serve both:
 
-- the resource-server path `/api/v1/external-call`
+- `/api/v1/external-call`
 - the configured token-endpoint path used by OAuth tests
 
-Integration coverage must include:
+The integration suite MUST cover:
 
-- `auth.type = none` still using the existing non-OAuth behavior
+- `auth.type = none`
 - end-to-end OAuth success
 - cached-token reuse across multiple business requests
 - expiry-driven reacquisition on the next request
 - single `401` refresh-and-replay
 - submission and validation producing the same successful business response under OAuth
 
-The existing non-OAuth `401` behavior should remain covered separately. OAuth-specific replay is an
-additional path, not a global redefinition of all `401` handling.
+The integration suite MUST keep the existing non-OAuth `401` behavior covered separately. The
+OAuth-specific replay MUST NOT redefine non-OAuth `401` handling.
 
-## Out of Scope
+## Exclusions
 
-The following are explicitly out of scope for OAuth v1:
+The OAuth v1 implementation MUST NOT define or require:
 
-- startup validation integration and participant startup gating
+- startup validation integration
+- participant startup gating
 - local-only startup validation as a required behavior
 - token-request `audience`
-- proactive refresh or background refresh tasks
-- sender-constrained tokens or mTLS-bound access tokens
+- proactive refresh
+- background refresh tasks
+- sender-constrained tokens
+- mTLS-bound access tokens
 - generic auth-provider interfaces
 - a broad transport-config refactor for participant extensions
-- hot reload of key material or trust material
+- hot reload of key material
+- hot reload of trust material
