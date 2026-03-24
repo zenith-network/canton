@@ -257,6 +257,31 @@ Implementation rule:
 - the resource-server endpoint block uses existing `FullClientConfig` / `ClientConfig` field vocabulary and config readers
 - the token-endpoint block uses the same field vocabulary plus `path`
 
+### Token-endpoint URI derivation
+
+The token-endpoint config derives one canonical HTTPS URI string.
+
+Derivation rule:
+
+- scheme is always `https`
+- host is the configured `address`, copied exactly
+- port is omitted when it is `443`
+- port is included as `:<port>` when it is not `443`
+- path is the configured `path`, copied exactly
+
+Validation rule:
+
+- `path` must start with `/`
+- `path` must not contain a query string
+- `path` must not contain a fragment
+- no dot-segment normalization, trailing-slash rewriting, host lowercasing, or other URI rewriting is performed
+
+Usage rule:
+
+- the actual token-endpoint HTTP request target uses that canonical URI
+- the `private_key_jwt` client assertion uses that same canonical URI as its `aud` claim
+- this design does not define a separate client-assertion audience field distinct from the token-endpoint URI
+
 ### Transport lifecycle settings
 
 The final config preserves the current transport-lifecycle knobs explicitly.
@@ -428,7 +453,7 @@ Concrete contract:
 - the JWT claims are:
   - `iss = client-id`
   - `sub = client-id`
-  - `aud = <configured token-endpoint URI>`
+  - `aud = <canonical token-endpoint URI derived from address, port, and path>`
   - `iat = now`
   - `exp = now + 30s`
   - `jti = <fresh random identifier per assertion>`

@@ -252,8 +252,11 @@ Startup and config validation must reject clearly invalid combinations such as:
 
 - static token config combined with OAuth config
 - OAuth config missing required token endpoint or client-assertion information
+- token-endpoint path values that are not absolute paths or that encode query/fragment components
 - audience and scope combinations that cannot be satisfied
 - private key or certificate references that cannot be loaded
+
+The token-endpoint config must derive one canonical HTTPS URI that is used both as the actual token request target and as the `private_key_jwt` assertion audience. The design must not introduce a second independently configured client-assertion audience field.
 
 ## Runtime Behavior Requirements
 
