@@ -227,6 +227,15 @@ Those modes do not share the same deadline source:
 - a failed background refresh clears the cached token, matching `AuthenticationTokenManager` semantics
 - the next business request then performs foreground acquisition using the outer business-call deadline
 
+Shared in-flight acquisition rule:
+
+- `OAuthAccessTokenManager` preserves one shared in-flight acquisition or refresh, matching `AuthenticationTokenManager`
+- if a business request arrives while that shared foreground or background fetch is already in flight, it waits on the existing shared future rather than starting a second token-endpoint fetch
+- each waiting business request still enforces its own outer deadline while waiting on that shared future
+- if a waiting business request reaches its deadline before the shared future completes, that business request fails locally with token-acquisition timeout
+- the shared fetch continues running after that caller times out; if it later succeeds, it populates the token cache for later callers
+- deadline expiry while waiting on a shared fetch never cancels the shared fetch and never causes a second parallel fetch to be started for the timed-out caller
+
 ### Token acquisition client
 
 `OAuthTokenClient` is a small HTTP client that:
@@ -673,7 +682,7 @@ The flattening rule is:
 
 - token acquisition failure
   - if the token endpoint returned an HTTP response, preserve that HTTP status code
-  - if token acquisition timed out before an HTTP response, return `408`
+  - if token acquisition timed out before an HTTP response, including while waiting on a shared in-flight acquisition future, return `408`
   - if token acquisition failed due to connect or I/O failure before an HTTP response, return `503`
   - if token acquisition failed due to local signing-key reload, local auth-material failure, or other participant-side auth setup failure at call time, return `500`
   - if token acquisition failed because the token response was malformed, omitted required fields, or returned an unsupported `token_type`, return `502`
