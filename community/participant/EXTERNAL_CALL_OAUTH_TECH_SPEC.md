@@ -246,10 +246,18 @@ The supported signing-key format for v1 MUST be RSA DER / PKCS#8.
 
 ## Key and Trust Material
 
-The implementation MUST load signing-key and trust material during
-`HttpExtensionServiceClient` construction.
+OAuth key and trust material MUST be initialized on demand.
 
-The implementation MUST NOT re-read signing-key or trust material on each token request.
+The implementation MUST NOT require signing-key, trust material, or OAuth-specific HTTP client state
+to load successfully during `HttpExtensionServiceClient` construction or participant startup.
+
+Before the first outbound HTTP interaction that requires OAuth material, the implementation MUST
+ensure that the required signing key, trust material, and OAuth-specific HTTP client state are
+initialized.
+
+After the first successful initialization, the implementation MUST reuse the initialized material
+and client state for the lifetime of the `HttpExtensionServiceClient` and MUST NOT re-read that
+material on each token request or resource request.
 
 The implementation MUST assume that key rotation and trust-material rotation take effect only after
 participant restart.
@@ -452,8 +460,8 @@ The implementation MUST apply the following OAuth-specific mappings:
 The returned `requestId` MUST be the request ID of the outbound HTTP interaction that produced the
 returned error.
 
-If token acquisition fails before any HTTP request is sent, the returned `requestId` MUST be
-`None`.
+If token acquisition or any local OAuth-material initialization step fails before any outbound HTTP
+interaction is sent, the returned `requestId` MUST be `None`.
 
 ## Logging and Metrics
 
