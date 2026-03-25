@@ -297,13 +297,15 @@ level.
 The per-extension configuration MUST NOT nest the resource-server endpoint under an `endpoint`
 block.
 
-The top-level per-extension config MUST carry:
+The top-level per-extension config MUST continue to expose the following resource-server fields
+directly at the top level:
 
 - `name`
 - `host`
 - `port`
 - `use-tls`
-- `trust-collection-file`
+- `trust-collection-file` when a custom trust collection is required
+- `tls-insecure` as an existing test-only compatibility field for the resource-server endpoint
 - `connect-timeout`
 - `request-timeout`
 - `max-total-timeout`
@@ -311,7 +313,7 @@ The top-level per-extension config MUST carry:
 - `retry-initial-delay`
 - `retry-max-delay`
 - `request-id-header`
-- `declared-functions`
+- `declared-functions`, which MUST remain supported and MUST default to empty when omitted
 
 ### Auth Fields
 
@@ -325,13 +327,14 @@ The auth configuration MUST support:
 
 `auth.type = none` MUST disable auth header injection.
 
-`auth.type = oauth` MUST contain:
+`auth.type = oauth` MUST support:
 
 - `token-endpoint`
   - `host`
   - `port`
   - `path`
-  - `trust-collection-file`
+  - `trust-collection-file` when a custom trust collection is required
+  - `tls-insecure` only when test scaffolding requires insecure TLS for the token endpoint
 - `client-id`
 - `private-key-file`
 - `key-id` when `kid` emission is required
@@ -359,6 +362,10 @@ The implementation MUST use the token-endpoint URI both as:
 - the `aud` claim in the client assertion
 
 The implementation MUST NOT support a separate assertion-audience override in v1.
+
+The existing top-level `tls-insecure` field MUST apply only to the resource-server endpoint.
+
+The token endpoint MUST NOT inherit the resource-server `tls-insecure` setting.
 
 The implementation MUST treat insecure or trust-all TLS behavior as test-only scaffolding. The
 canonical OAuth contract MUST NOT rely on insecure TLS.
@@ -410,6 +417,7 @@ extensions = {
     retry-initial-delay = 1s
     retry-max-delay = 10s
     request-id-header = "X-Request-Id"
+    declared-functions = []
   }
 }
 ```
@@ -431,6 +439,8 @@ by `HttpExtensionServiceClient`.
 
 The implementation MUST apply the following OAuth-specific mappings:
 
+- resource-server `401` with `auth.type = none`: `401`, terminal, no replay, with auth-neutral
+  message `Unauthorized`
 - token-endpoint HTTP failure: preserve the exact HTTP status code
 - malformed token response: `502`
 - local signing failure: `500`
@@ -495,6 +505,16 @@ The implementation MUST reuse the existing external-call integration harness:
 
 - `/api/v1/external-call`
 - the configured token-endpoint path used by OAuth tests
+
+OAuth integration tests MUST terminate HTTPS for both the resource endpoint and the token endpoint.
+
+OAuth integration tests MAY satisfy TLS verification either by:
+
+- providing explicit test trust material through `trust-collection-file`
+- using the test-only `tls-insecure` and `token-endpoint.tls-insecure` scaffolding
+
+The canonical example configuration remains production-oriented and therefore MUST NOT rely on the
+test-only insecure TLS flags.
 
 The integration suite MUST cover:
 
