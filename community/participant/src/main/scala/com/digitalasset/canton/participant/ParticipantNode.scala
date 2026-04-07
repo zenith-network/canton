@@ -39,6 +39,7 @@ import com.digitalasset.canton.participant.health.admin.ParticipantStatus
 import com.digitalasset.canton.participant.extension.{
   ExtensionServiceExternalCallHandler,
   ExtensionServiceManager,
+  HttpExtensionClientRuntime,
 }
 import com.digitalasset.canton.participant.ledger.api.{
   AcsCommitmentPublicationPostProcessor,
@@ -679,6 +680,7 @@ class ParticipantNodeBootstrap(
           val manager = new ExtensionServiceManager(
             extensionConfigs = parameters.engine.extensions,
             engineExtensionsConfig = parameters.engine.extensionSettings,
+            runtime = HttpExtensionClientRuntime.system,
             loggerFactory = loggerFactory,
           )
           logger.info(
@@ -689,6 +691,11 @@ class ParticipantNodeBootstrap(
         } else {
           None
         }
+
+        _ <- EitherT(
+          extensionServiceManagerOpt
+            .fold(FutureUnlessShutdown.pure[Either[String, Unit]](Right(())))(_.initializeOnStartup())
+        )
 
         // Create external call handler from extension service manager for use in transaction reinterpretation
         externalCallHandler: Option[ExternalCallHandler] = extensionServiceManagerOpt.map(manager =>

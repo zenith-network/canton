@@ -9,74 +9,94 @@ import com.digitalasset.canton.logging.{NamedLoggerFactory, NamedLogging}
 import com.digitalasset.canton.participant.config.{EngineExtensionsConfig, ExtensionServiceConfig}
 import com.digitalasset.canton.tracing.TraceContext
 
-import java.net.http.HttpClient
-import java.time.Duration
 import scala.concurrent.ExecutionContext
 
-/** Manages extension service connections with pooled HTTP clients.
+/** Manages extension service connections with one client per configured extension.
   *
   * This manager is responsible for:
-  * - Creating and managing HTTP clients with connection pooling
+  * - Creating and managing extension clients
   * - Dispatching external call requests to the appropriate extension service
   * - Validating extension configurations on startup
   *
   * @param extensionConfigs Map of extension ID to configuration
   * @param engineExtensionsConfig Engine extensions configuration
+  * @param resourcesFactory HTTP resource factory for extension clients
+  * @param runtime Runtime side effects used by extension clients
   * @param loggerFactory Logger factory
   * @param ec Execution context
   */
-class ExtensionServiceManager(
+class ExtensionServiceManager private[extension] (
     extensionConfigs: Map[String, ExtensionServiceConfig],
     engineExtensionsConfig: EngineExtensionsConfig,
+    resourcesFactory: HttpExtensionClientResourcesFactory,
+    runtime: HttpExtensionClientRuntime,
     override protected val loggerFactory: NamedLoggerFactory,
 )(implicit ec: ExecutionContext)
     extends NamedLogging
     with FlagCloseable {
 
+  def this(
+      extensionConfigs: Map[String, ExtensionServiceConfig],
+      engineExtensionsConfig: EngineExtensionsConfig,
+      runtime: HttpExtensionClientRuntime,
+      loggerFactory: NamedLoggerFactory,
+  )(implicit ec: ExecutionContext) =
+    this(
+      extensionConfigs = extensionConfigs,
+      engineExtensionsConfig = engineExtensionsConfig,
+      resourcesFactory = new JdkHttpExtensionClientResourcesFactory(loggerFactory),
+      runtime = runtime,
+      loggerFactory = loggerFactory,
+    )
+
+  def this(
+      extensionConfigs: Map[String, ExtensionServiceConfig],
+      engineExtensionsConfig: EngineExtensionsConfig,
+      loggerFactory: NamedLoggerFactory,
+  )(implicit ec: ExecutionContext) =
+    this(
+      extensionConfigs = extensionConfigs,
+      engineExtensionsConfig = engineExtensionsConfig,
+      resourcesFactory = new JdkHttpExtensionClientResourcesFactory(loggerFactory),
+      runtime = HttpExtensionClientRuntime.system,
+      loggerFactory = loggerFactory,
+    )
+
   override val timeouts: ProcessingTimeout = ProcessingTimeout()
 
-  // Shared HTTP client with connection pooling
-  // Using HTTP/1.1 for compatibility, but could be upgraded to HTTP/2 if needed
-  private val httpClient: HttpClient = {
-    val builder = HttpClient
-      .newBuilder()
-      .version(HttpClient.Version.HTTP_1_1)
-      .connectTimeout(Duration.ofSeconds(30)) // Global connect timeout, individual requests can override
-
-    // Check if any extension requires insecure TLS
-    val anyInsecure = extensionConfigs.values.exists(_.tlsInsecure)
-    if (anyInsecure) {
+  extensionConfigs.values.foreach { config =>
+    if (config.useTls && config.tlsInsecure) {
       logger.warn(
-        "WARNING: At least one extension service is configured with TLS insecure mode. " +
-          "This should only be used in development!"
+        s"WARNING: Extension service '${config.name}' is configured with TLS insecure mode. This should only be used in development!"
       )(TraceContext.empty)
-      builder.sslContext(HttpExtensionServiceClient.createInsecureSSLContext())
     }
-
-    builder.build()
   }
 
-  private val runtime: HttpExtensionClientRuntime = HttpExtensionClientRuntime.system
-
   // Extension clients by ID
-  private val clients: Map[String, ExtensionServiceClient] = {
+  private val httpClients: Map[String, HttpExtensionServiceClient] =
+    if (engineExtensionsConfig.echoMode) {
+      Map.empty
+    } else {
+      extensionConfigs.map { case (id, config) =>
+        id -> new HttpExtensionServiceClient(
+          id,
+          config,
+          resourcesFactory,
+          runtime,
+          loggerFactory,
+        )
+      }
+    }
+
+  private val clients: Map[String, ExtensionServiceClient] =
     if (engineExtensionsConfig.echoMode) {
       logger.info("Extension services running in echo mode - external calls will return input as output")(TraceContext.empty)
       extensionConfigs.map { case (id, _) =>
         id -> new EchoExtensionServiceClient(id)
       }
     } else {
-      extensionConfigs.map { case (id, config) =>
-        id -> new HttpExtensionServiceClient(
-          id,
-          config,
-          new JdkHttpExtensionClientTransport(httpClient),
-          runtime,
-          loggerFactory,
-        )
-      }
+      httpClients
     }
-  }
 
   /** Get a client for the specified extension.
     *
@@ -142,6 +162,46 @@ class ExtensionServiceManager(
     }
   }
 
+  def initializeOnStartup()(implicit tc: TraceContext): FutureUnlessShutdown[Either[String, Unit]] =
+    if (engineExtensionsConfig.echoMode) {
+      FutureUnlessShutdown.pure(Right(()))
+    } else {
+      val localPreflightErrors = httpClients.toSeq.flatMap { case (id, client) =>
+        client.startupLocalPreflight().left.toOption.map(error => s"Extension '$id': $error")
+      }
+
+      if (localPreflightErrors.nonEmpty) {
+        val message =
+          s"Extension startup local preflight failed: ${localPreflightErrors.mkString("; ")}"
+        logger.error(message)
+        FutureUnlessShutdown.pure(Left(message))
+      } else if (!engineExtensionsConfig.validateExtensionsOnStartup) {
+        logger.info("Extension remote validation on startup is disabled")
+        FutureUnlessShutdown.pure(Right(()))
+      } else {
+        validateAllExtensions().map { results =>
+          val invalidResults = results.collect {
+            case (id, ExtensionValidationResult.Invalid(errors)) =>
+              s"Extension '$id': ${errors.mkString(", ")}"
+          }
+
+          if (invalidResults.isEmpty) {
+            Right(())
+          } else {
+            val message =
+              s"Extension startup remote validation failed: ${invalidResults.mkString("; ")}"
+            if (engineExtensionsConfig.failOnExtensionValidationError) {
+              logger.error(message)
+              Left(message)
+            } else {
+              logger.warn(message)
+              Right(())
+            }
+          }
+        }
+      }
+    }
+
   /** Check if the manager has any configured extensions. */
   def hasExtensions: Boolean = clients.nonEmpty
 
@@ -149,8 +209,6 @@ class ExtensionServiceManager(
   def extensionIds: Set[String] = clients.keySet
 
   override def onClosed(): Unit = {
-    // HttpClient in Java 11+ doesn't need explicit closing
-    // but we could add cleanup logic here if needed
     logger.debug("ExtensionServiceManager closed")(TraceContext.empty)
   }
 }

@@ -5,15 +5,10 @@ package com.digitalasset.canton.participant.extension
 
 import com.digitalasset.canton.lifecycle.FutureUnlessShutdown
 import com.digitalasset.canton.logging.{NamedLoggerFactory, NamedLogging}
-import com.digitalasset.canton.participant.config.ExtensionServiceConfig
+import com.digitalasset.canton.participant.config.{ExtensionServiceAuthConfig, ExtensionServiceConfig}
 import com.digitalasset.canton.tracing.TraceContext
 
-import java.net.URI
-import java.nio.file.Files
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
 import java.time.Duration
-import javax.net.ssl.{SSLContext, TrustManager, X509TrustManager}
 import scala.concurrent.{ExecutionContext, Future, blocking}
 import scala.util.Try
 
@@ -22,33 +17,105 @@ import scala.util.Try
   *
   * @param extensionId The extension identifier (key from config map)
   * @param config Configuration for this extension service
-  * @param transport HTTP transport for this extension service
+  * @param resourcesFactory HTTP resource factory for this extension service
   * @param runtime Runtime side effects used by retry and request generation
+  * @param requestBuilder Request construction helper
+  * @param responseMapper Response and exception mapping helper
   * @param loggerFactory Logger factory
   */
-class HttpExtensionServiceClient(
+class HttpExtensionServiceClient private[extension] (
     override val extensionId: String,
     config: ExtensionServiceConfig,
-    transport: HttpExtensionClientTransport,
+    resourcesFactory: HttpExtensionClientResourcesFactory,
     runtime: HttpExtensionClientRuntime,
+    requestBuilder: HttpExtensionRequestBuilder,
+    responseMapper: HttpExtensionResponseMapper,
+    oauthAssertionFactory: Option[() => String],
     override protected val loggerFactory: NamedLoggerFactory,
 )(implicit ec: ExecutionContext)
     extends ExtensionServiceClient
     with NamedLogging {
 
-  // Construct the endpoint URL
-  private val scheme = if (config.useTls) "https" else "http"
-  private val endpoint: URI = URI.create(s"$scheme://${config.host}:${config.port}/api/v1/external-call")
+  def this(
+      extensionId: String,
+      config: ExtensionServiceConfig,
+      resourcesFactory: HttpExtensionClientResourcesFactory,
+      runtime: HttpExtensionClientRuntime,
+      loggerFactory: NamedLoggerFactory,
+  )(implicit ec: ExecutionContext) =
+    this(
+      extensionId = extensionId,
+      config = config,
+      resourcesFactory = resourcesFactory,
+      runtime = runtime,
+      requestBuilder = new HttpExtensionRequestBuilder(config),
+      responseMapper = new HttpExtensionResponseMapper,
+      oauthAssertionFactory = None,
+      loggerFactory = loggerFactory,
+    )
 
-  // Load JWT token from config or file
-  private lazy val jwtToken: Option[String] = {
-    config.jwt.orElse {
-      config.jwtFile.flatMap { path =>
-        Try {
-          new String(Files.readAllBytes(path)).trim
-        }.toOption
+  private lazy val resources = resourcesFactory.create(config)
+  private lazy val oauthClientAssertionBuilder: Option[() => String] = config.auth match {
+    case _: ExtensionServiceAuthConfig.OAuth =>
+      Some(
+        oauthAssertionFactory.getOrElse {
+          val assertionFactory = new HttpExtensionOAuthClientAssertionFactory(
+            config = config,
+            nowMillis = () => runtime.nowMillis(),
+          )
+          () => assertionFactory.buildClientAssertion()
+        }
+      )
+    case _ => None
+  }
+  private lazy val oauthTokenClient: Option[HttpExtensionOAuthTokenClient] = config.auth match {
+    case _: ExtensionServiceAuthConfig.OAuth =>
+      val tokenTransport = resources.tokenTransport.getOrElse {
+        throw new IllegalStateException(
+          s"OAuth extension '$extensionId' requires a dedicated token transport"
+        )
       }
-    }
+      val buildAssertion = oauthClientAssertionBuilder match {
+        case Some(builder) => builder
+        case None =>
+          throw new IllegalStateException(
+            s"OAuth extension '$extensionId' requires an assertion builder"
+          )
+      }
+      Some(
+        new HttpExtensionOAuthTokenClient(
+          transport = tokenTransport,
+          requestBuilder = new HttpExtensionOAuthTokenRequestBuilder(config),
+          buildClientAssertion = buildAssertion,
+          responseParser = new HttpExtensionOAuthTokenResponseParser,
+          nowMillis = () => runtime.nowMillis(),
+          responseMapper = responseMapper,
+        )
+      )
+    case _ => None
+  }
+  private lazy val oauthTokenManager: Option[HttpExtensionOAuthTokenManager] = config.auth match {
+    case _: ExtensionServiceAuthConfig.OAuth =>
+      Some(
+        new HttpExtensionOAuthTokenManager(
+          extensionId = extensionId,
+          requestTimeoutForRemainingBudget = requestTimeoutForRemainingBudget,
+          acquireToken = (timeout, requestId) =>
+            oauthTokenClient match {
+              case Some(tokenClient) =>
+                tokenClient.acquireToken(
+                  timeout = timeout,
+                  requestId = requestId,
+                )
+              case None =>
+                Left(ExtensionCallError(500, "OAuth token client not available", None))
+            },
+          nowMillis = () => runtime.nowMillis(),
+          newRequestId = () => runtime.newRequestId(),
+          loggerFactory = loggerFactory,
+        )
+      )
+    case _ => None
   }
 
   // Declared function config hashes for validation
@@ -57,6 +124,14 @@ class HttpExtensionServiceClient(
 
   override def getDeclaredConfigHash(functionId: String): Option[String] =
     declaredConfigHashes.get(functionId)
+
+  private[extension] def startupLocalPreflight(): Either[String, Unit] =
+    Try {
+      val _ = resources.resourceTransport
+      val _ = oauthTokenClient
+      oauthClientAssertionBuilder.foreach(_.apply())
+      ()
+    }.toEither.left.map(error => s"Extension '$extensionId' startup local preflight failed: ${error.getMessage}")
 
   override def call(
       functionId: String,
@@ -77,40 +152,87 @@ class HttpExtensionServiceClient(
     FutureUnlessShutdown.outcomeF {
       Future {
         blocking {
-          // Try to make a simple health check call
-          // For now, we just verify we can establish a connection
-          try {
-            val requestId = runtime.newRequestId()
-            val request = buildRequest(
-              functionId = "_health",
-              configHash = "",
-              input = "",
-              mode = "validation",
-              timeout = Duration.ofMillis(config.connectTimeout.underlying.toMillis),
-              requestId = requestId,
-            )
-
-            // We don't really care about the response, just that we can connect
-            val resp = transport.send(request)
-
-            // Any response (even 4xx) means the service is reachable
-            if (resp.statusCode >= 200 && resp.statusCode < 600) {
-              ExtensionValidationResult.Valid
-            } else {
-              ExtensionValidationResult.Invalid(Seq(s"Unexpected response code: ${resp.statusCode}"))
-            }
-          } catch {
-            case e: java.net.ConnectException =>
-              ExtensionValidationResult.Invalid(Seq(s"Cannot connect to extension service: ${e.getMessage}"))
-            case e: java.net.http.HttpTimeoutException =>
-              ExtensionValidationResult.Invalid(Seq(s"Connection timeout: ${e.getMessage}"))
-            case e: Exception =>
-              ExtensionValidationResult.Invalid(Seq(s"Validation failed: ${e.getMessage}"))
-          }
+          validateConfigurationInternal()
         }
       }
     }
   }
+
+  private def validateConfigurationInternal(): ExtensionValidationResult = {
+    val timeout = Duration.ofMillis(config.connectTimeout.underlying.toMillis)
+    config.auth match {
+      case _: ExtensionServiceAuthConfig.OAuth =>
+        validateOAuthConfiguration(timeout)
+      case _ =>
+        validateReachabilityConfiguration(timeout, bearerToken = None, treat401And403AsInvalid = false)
+    }
+  }
+
+  private def validateOAuthConfiguration(timeout: Duration): ExtensionValidationResult =
+    try {
+      val tokenRequestId = runtime.newRequestId()
+      oauthTokenClient match {
+        case Some(tokenClient) =>
+          tokenClient.acquireToken(timeout = timeout, requestId = tokenRequestId) match {
+            case Right(token) =>
+              validateReachabilityConfiguration(
+                timeout = timeout,
+                bearerToken = Some(token.value),
+                treat401And403AsInvalid = true,
+              )
+            case Left(error) =>
+              ExtensionValidationResult.Invalid(
+                Seq(s"OAuth token acquisition failed: ${error.message}")
+              )
+          }
+        case None =>
+          ExtensionValidationResult.Invalid(Seq("OAuth token client not available"))
+      }
+    } catch {
+      case e: Exception =>
+        ExtensionValidationResult.Invalid(Seq(s"Validation failed: ${e.getMessage}"))
+    }
+
+  private def validateReachabilityConfiguration(
+      timeout: Duration,
+      bearerToken: Option[String],
+      treat401And403AsInvalid: Boolean,
+  ): ExtensionValidationResult =
+    try {
+      val requestId = runtime.newRequestId()
+      val request = requestBuilder.buildValidationRequest(
+        timeout = timeout,
+        requestId = requestId,
+        bearerToken = bearerToken,
+      )
+      val response = resources.resourceTransport.send(request)
+
+      response.statusCode match {
+        case 401 if treat401And403AsInvalid =>
+          ExtensionValidationResult.Invalid(
+            Seq(
+              s"OAuth validation request failed with Unauthorized: ${responseMapper.responseBodyOrDefault(response, "Unauthorized")}"
+            )
+          )
+        case 403 if treat401And403AsInvalid =>
+          ExtensionValidationResult.Invalid(
+            Seq(
+              s"OAuth validation request failed with Forbidden: ${responseMapper.responseBodyOrDefault(response, "Forbidden")}"
+            )
+          )
+        case code if code >= 200 && code < 600 =>
+          ExtensionValidationResult.Valid
+        case code =>
+          ExtensionValidationResult.Invalid(Seq(s"Unexpected response code: $code"))
+      }
+    } catch {
+      case e: java.net.ConnectException =>
+        ExtensionValidationResult.Invalid(Seq(s"Cannot connect to extension service: ${e.getMessage}"))
+      case e: java.net.http.HttpTimeoutException =>
+        ExtensionValidationResult.Invalid(Seq(s"Connection timeout: ${e.getMessage}"))
+      case e: Exception =>
+        ExtensionValidationResult.Invalid(Seq(s"Validation failed: ${e.getMessage}"))
+    }
 
   /** Make an HTTP call with retry logic */
   private def callWithRetry(
@@ -140,7 +262,7 @@ class HttpExtensionServiceClient(
         )
         Left(finalError)
       } else {
-        val result = singleCall(functionId, configHash, input, mode)
+        val result = singleCall(functionId, configHash, input, mode, deadlineMs)
 
         result match {
           case Right(response) =>
@@ -151,14 +273,13 @@ class HttpExtensionServiceClient(
 
           case Left(error) if shouldRetry(error) && attempt < config.maxRetries.value =>
             val remainingTimeMs = deadlineMs - runtime.nowMillis()
-            val delay = calculateBackoff(attempt + 1, error.retryAfter, remainingTimeMs)
-
-            if (delay >= remainingTimeMs) {
+            if (remainingTimeMs <= 0) {
               logger.warn(
                 s"External call to extension '$extensionId' failed (attempt ${attempt + 1}/${config.maxRetries}): ${error.message} (status=${error.statusCode}). Cannot retry: insufficient time remaining (${remainingTimeMs}ms)"
               )
               Left(error)
             } else {
+              val delay = calculateBackoff(attempt + 1, error.retryAfter, remainingTimeMs)
               logger.warn(
                 s"External call to extension '$extensionId' failed (attempt ${attempt + 1}/${config.maxRetries}): ${error.message} (status=${error.statusCode}). Retrying in ${delay}ms"
               )
@@ -185,111 +306,199 @@ class HttpExtensionServiceClient(
       configHash: String,
       input: String,
       mode: String,
+      deadlineMs: Long,
   )(implicit tc: TraceContext): Either[ExtensionCallError, String] = {
-    val requestId = runtime.newRequestId()
+    currentBearerToken(deadlineMs) match {
+      case Left(error) =>
+        Left(error)
 
-    try {
-      val request = buildRequest(
+      case Right(bearerToken) =>
+        sendWithOptionalOAuthReplay(
+          functionId = functionId,
+          configHash = configHash,
+          input = input,
+          mode = mode,
+          bearerToken = bearerToken,
+          deadlineMs = deadlineMs,
+        )
+    }
+  }
+
+  private def sendWithOptionalOAuthReplay(
+      functionId: String,
+      configHash: String,
+      input: String,
+      mode: String,
+      bearerToken: Option[String],
+      deadlineMs: Long,
+  )(implicit tc: TraceContext): Either[ExtensionCallError, String] =
+    sendResourceRequest(
+      functionId = functionId,
+      configHash = configHash,
+      input = input,
+      mode = mode,
+      bearerToken = bearerToken,
+      deadlineMs = deadlineMs,
+    ).flatMap { case (response, requestId) =>
+      if (shouldReplayAfterUnauthorized(response, bearerToken)) {
+        replayResourceRequestAfterUnauthorized(
+          functionId = functionId,
+          configHash = configHash,
+          input = input,
+          mode = mode,
+          sentBearerToken = bearerToken,
+          deadlineMs = deadlineMs,
+        )
+      } else {
+        mapResourceResponse(response, requestId)
+      }
+    }
+
+  private def replayResourceRequestAfterUnauthorized(
+      functionId: String,
+      configHash: String,
+      input: String,
+      mode: String,
+      sentBearerToken: Option[String],
+      deadlineMs: Long,
+  )(implicit tc: TraceContext): Either[ExtensionCallError, String] = {
+    sentBearerToken.foreach(invalidateCachedOAuthTokenIfMatches)
+    currentBearerToken(deadlineMs).flatMap { freshBearerToken =>
+      sendResourceRequest(
         functionId = functionId,
         configHash = configHash,
         input = input,
         mode = mode,
-        timeout = Duration.ofMillis(config.requestTimeout.underlying.toMillis),
-        requestId = requestId,
-      )
+        bearerToken = freshBearerToken,
+        deadlineMs = deadlineMs,
+      ).flatMap { case (replayResponse, replayRequestId) =>
+        if (replayResponse.statusCode == 401) {
+          Left(
+            ExtensionCallError(
+              401,
+              "Unauthorized - OAuth token rejected by resource server",
+              Some(replayRequestId),
+            )
+          )
+        } else {
+          mapResourceResponse(replayResponse, replayRequestId)
+        }
+      }
+    }
+  }
 
-      logger.debug(
-        s"Making external call to extension '$extensionId': functionId=$functionId, mode=$mode, requestId=$requestId"
-      )
+  private def sendResourceRequest(
+      functionId: String,
+      configHash: String,
+      input: String,
+      mode: String,
+      bearerToken: Option[String],
+      deadlineMs: Long,
+  )(implicit tc: TraceContext): Either[ExtensionCallError, (HttpExtensionClientResponse, String)] =
+    requestTimeoutForRemainingBudget(deadlineMs).flatMap { timeout =>
+      val requestId = runtime.newRequestId()
+      try {
+        val request = requestBuilder.buildCallRequest(
+          functionId = functionId,
+          configHash = configHash,
+          input = input,
+          mode = mode,
+          timeout = timeout,
+          requestId = requestId,
+          bearerToken = bearerToken,
+        )
 
-      val resp = transport.send(request)
+        logger.debug(
+          s"Making external call to extension '$extensionId': functionId=$functionId, mode=$mode, requestId=$requestId"
+        )
 
-      resp.statusCode match {
-        case 200 =>
-          logger.debug(s"External call to extension '$extensionId' succeeded: requestId=$requestId")
-          Right(resp.body)
+        Right(resources.resourceTransport.send(request) -> requestId)
+      } catch {
+        case e: java.net.http.HttpTimeoutException =>
+          logger.warn(s"External call to extension '$extensionId' timed out: requestId=$requestId")
+          Left(responseMapper.mapException(e, requestId))
 
-        case 400 =>
-          Left(parseErrorResponse(resp, requestId, "Bad Request"))
+        case e: java.net.ConnectException =>
+          logger.error(s"External call to extension '$extensionId' connection failed: requestId=$requestId, error=${e.getMessage}")
+          Left(responseMapper.mapException(e, requestId))
 
-        case 401 =>
-          Left(parseErrorResponse(resp, requestId, "Unauthorized - check JWT token"))
+        case e: java.io.IOException =>
+          logger.error(s"External call to extension '$extensionId' I/O error: requestId=$requestId, error=${e.getMessage}")
+          Left(responseMapper.mapException(e, requestId))
 
-        case 403 =>
-          Left(parseErrorResponse(resp, requestId, "Forbidden - insufficient permissions"))
+        case e: Exception =>
+          logger.error(s"External call to extension '$extensionId' unexpected error: requestId=$requestId, error=${e.getMessage}")
+          Left(responseMapper.mapException(e, requestId))
+      }
+    }
 
-        case 404 =>
-          Left(parseErrorResponse(resp, requestId, "Function not found"))
+  private def mapResourceResponse(
+      response: HttpExtensionClientResponse,
+      requestId: String,
+  )(implicit tc: TraceContext): Either[ExtensionCallError, String] =
+    responseMapper.mapResponse(response, requestId) match {
+      case Right(result) =>
+        logger.debug(s"External call to extension '$extensionId' succeeded: requestId=$requestId")
+        Right(result)
+      case Left(error) =>
+        Left(error)
+    }
 
-        case 408 =>
-          Left(parseErrorResponse(resp, requestId, "Request timeout"))
+  private def shouldReplayAfterUnauthorized(
+      response: HttpExtensionClientResponse,
+      bearerToken: Option[String],
+  ): Boolean =
+    response.statusCode == 401 &&
+      bearerToken.nonEmpty &&
+      oauthTokenClient.nonEmpty &&
+      hasBearerInvalidTokenChallenge(response)
 
-        case 429 =>
-          Left(parseErrorResponseWithRetry(resp, requestId, "Rate limit exceeded"))
+  private def hasBearerInvalidTokenChallenge(response: HttpExtensionClientResponse): Boolean =
+    response.headers.iterator.collect {
+      case (name, values) if name.equalsIgnoreCase("WWW-Authenticate") => values
+    }.flatten.exists { headerValue =>
+      HttpExtensionServiceClient.BearerInvalidTokenChallengePattern.findFirstIn(headerValue).nonEmpty
+    }
 
-        case 500 =>
-          Left(parseErrorResponse(resp, requestId, "Internal server error"))
+  private def invalidateCachedOAuthTokenIfMatches(sentToken: String)(implicit tc: TraceContext): Unit =
+    oauthTokenManager.foreach(_.invalidateCachedTokenIfMatches(sentToken))
 
-        case 502 =>
-          Left(parseErrorResponse(resp, requestId, "Bad gateway"))
-
-        case 503 =>
-          Left(parseErrorResponseWithRetry(resp, requestId, "Service unavailable"))
-
-        case 504 =>
-          Left(parseErrorResponse(resp, requestId, "Gateway timeout"))
-
-        case code =>
-          Left(parseErrorResponse(resp, requestId, s"HTTP $code"))
+  private def currentBearerToken(deadlineMs: Long)(implicit
+      tc: TraceContext
+  ): Either[ExtensionCallError, Option[String]] =
+    try {
+      oauthTokenManager match {
+        case None => Right(None)
+        case Some(tokenManager) =>
+          tokenManager.currentBearerToken(deadlineMs).map(Some(_))
       }
     } catch {
-      case e: java.net.http.HttpTimeoutException =>
-        logger.warn(s"External call to extension '$extensionId' timed out: requestId=$requestId")
-        Left(ExtensionCallError(408, s"Request timeout: ${e.getMessage}", Some(requestId)))
-
-      case e: java.net.ConnectException =>
-        logger.error(s"External call to extension '$extensionId' connection failed: requestId=$requestId, error=${e.getMessage}")
-        Left(ExtensionCallError(503, s"Connection failed: ${e.getMessage}", Some(requestId)))
-
-      case e: java.io.IOException =>
-        logger.error(s"External call to extension '$extensionId' I/O error: requestId=$requestId, error=${e.getMessage}")
-        Left(ExtensionCallError(503, s"I/O error: ${e.getMessage}", Some(requestId)))
-
       case e: Exception =>
-        logger.error(s"External call to extension '$extensionId' unexpected error: requestId=$requestId, error=${e.getMessage}")
-        Left(ExtensionCallError(500, s"Unexpected error: ${e.getMessage}", Some(requestId)))
+        Left(logAndMapPreOutboundLocalFailure(e))
+    }
+
+  private def requestTimeoutForRemainingBudget(deadlineMs: Long): Either[ExtensionCallError, Duration] = {
+    val remainingBudgetMs = deadlineMs - runtime.nowMillis()
+    if (remainingBudgetMs <= 0) {
+      Left(totalTimeoutExceededError)
+    } else {
+      Right(Duration.ofMillis(math.min(config.requestTimeout.underlying.toMillis, remainingBudgetMs)))
     }
   }
 
-  private def parseErrorResponse(
-      resp: HttpExtensionClientResponse,
-      requestId: String,
-      defaultMessage: String,
+  private def totalTimeoutExceededError: ExtensionCallError =
+    ExtensionCallError(504, "Total timeout exceeded", None)
+
+  private def preOutboundLocalFailure(exception: Exception): ExtensionCallError =
+    ExtensionCallError(500, s"Unexpected error: ${exception.getMessage}", None)
+
+  private def logAndMapPreOutboundLocalFailure(exception: Exception)(implicit
+      tc: TraceContext
   ): ExtensionCallError = {
-    val body = resp.body
-    val message = if (body != null && body.nonEmpty && body.length < 500) {
-      s"$defaultMessage: $body"
-    } else {
-      defaultMessage
-    }
-    ExtensionCallError(resp.statusCode, message, Some(requestId))
-  }
-
-  private def parseErrorResponseWithRetry(
-      resp: HttpExtensionClientResponse,
-      requestId: String,
-      defaultMessage: String,
-  ): ExtensionCallErrorWithRetry = {
-    val retryAfter = firstHeaderValue(resp, "Retry-After").flatMap(s => Try(s.toInt).toOption)
-
-    val body = resp.body
-    val message = if (body != null && body.nonEmpty && body.length < 500) {
-      s"$defaultMessage: $body"
-    } else {
-      defaultMessage
-    }
-
-    ExtensionCallErrorWithRetry(resp.statusCode, message, Some(requestId), retryAfter)
+    logger.error(
+      s"External call to extension '$extensionId' local OAuth initialization failed before outbound HTTP: error=${exception.getMessage}"
+    )
+    preOutboundLocalFailure(exception)
   }
 
   private def shouldRetry(error: ExtensionCallError): Boolean = {
@@ -300,10 +509,7 @@ class HttpExtensionServiceClient(
   }
 
   private def calculateBackoff(attempt: Int, retryAfter: Option[Int], remainingTimeMs: Long): Long = {
-    val connectTimeoutMs = config.connectTimeout.underlying.toMillis
-    val requestTimeoutMs = config.requestTimeout.underlying.toMillis
-    val minTimeForNextRequest = connectTimeoutMs + requestTimeoutMs
-    val availableForBackoff = (remainingTimeMs - minTimeForNextRequest).max(0L)
+    val availableForBackoff = (remainingTimeMs - 1L).max(0L)
     val retryInitialDelayMs = config.retryInitialDelay.underlying.toMillis
     val retryMaxDelayMs = config.retryMaxDelay.underlying.toMillis
 
@@ -320,60 +526,14 @@ class HttpExtensionServiceClient(
     baseDelay
   }
 
-  private def buildRequest(
-      functionId: String,
-      configHash: String,
-      input: String,
-      mode: String,
-      timeout: Duration,
-      requestId: String,
-  ): HttpExtensionClientRequest = {
-    val baseHeaders = Seq(
-      "Content-Type" -> "application/octet-stream",
-      "X-Daml-External-Function-Id" -> functionId,
-      "X-Daml-External-Config-Hash" -> configHash,
-      "X-Daml-External-Mode" -> mode,
-      config.requestIdHeader -> requestId,
-    )
-    val authHeaders = jwtToken.toList.map(token => "Authorization" -> s"Bearer $token")
-
-    HttpExtensionClientRequest(
-      uri = endpoint,
-      timeout = timeout,
-      headers = baseHeaders ++ authHeaders,
-      body = input,
-    )
-  }
-
-  private def firstHeaderValue(
-      response: HttpExtensionClientResponse,
-      headerName: String,
-  ): Option[String] =
-    response.headers.iterator.collectFirst {
-      case (name, values) if name.equalsIgnoreCase(headerName) => values.headOption
-    }.flatten
-
   private implicit class ExtensionCallErrorOps(error: ExtensionCallError) {
-    def retryAfter: Option[Int] = error match {
-      case e: ExtensionCallErrorWithRetry => e.retryAfterSeconds
-      case _ => None
-    }
+    def retryAfter: Option[Int] = responseMapper.retryAfter(error)
   }
+
 }
 
-object HttpExtensionServiceClient {
-
-  /** Create an insecure SSL context for development (trusts all certificates) */
-  @SuppressWarnings(Array("org.wartremover.warts.Null"))
-  def createInsecureSSLContext(): SSLContext = {
-    val trustAllCerts = Array[TrustManager](new X509TrustManager {
-      def checkClientTrusted(chain: Array[X509Certificate], authType: String): Unit = {}
-      def checkServerTrusted(chain: Array[X509Certificate], authType: String): Unit = {}
-      def getAcceptedIssuers(): Array[X509Certificate] = Array.empty
-    })
-
-    val sslContext = SSLContext.getInstance("TLS")
-    sslContext.init(null, trustAllCerts, new SecureRandom())
-    sslContext
-  }
+private[extension] object HttpExtensionServiceClient {
+  // Keep OAuth-specific replay conservative: only explicit Bearer invalid_token challenges qualify.
+  private val BearerInvalidTokenChallengePattern =
+    """(?i)(?:^|,)\s*Bearer\b.*\berror\s*=\s*"invalid_token"""".r
 }
