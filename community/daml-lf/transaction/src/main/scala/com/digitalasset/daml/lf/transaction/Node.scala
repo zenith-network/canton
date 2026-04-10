@@ -229,7 +229,14 @@ object Node {
     def key: Option[GlobalKeyWithMaintainers] = keyOpt
 
     override private[lf] def updateVersion(version: SerializationVersion): Node.Exercise =
-      copy(version = version, keyOpt = keyOpt.map(rehash))
+      copy(
+        version = version,
+        keyOpt = keyOpt.map(rehash),
+        externalCallResults =
+          if (Ordering[SerializationVersion].lt(version, SerializationVersion.minExternalCallResults))
+            ExternalCallResult.Empty
+          else externalCallResults,
+      )
 
     override def mapCid(f: ContractId => ContractId): Node.Exercise = copy(
       targetCoid = f(targetCoid),

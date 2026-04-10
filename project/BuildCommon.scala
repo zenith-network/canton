@@ -3588,6 +3588,7 @@ object BuildCommon {
         // javaOnlySettings,
         coverageEnabled := false,
         libraryDependencies ++= Seq(
+          circe_parser % Test,
           google_protobuf_java % Test,
           scalacheck % Test,
           scala_logging % Test,
