@@ -323,7 +323,32 @@ class TransactionCoder(allowNullCharacters: Boolean) {
           case None =>
             Right(())
         }
+        _ <-
+          if (node.externalCallResults.nonEmpty)
+            Either.cond(
+              node.version >= SerializationVersion.minExternalCallResults,
+              node.externalCallResults.foreach(result =>
+                discard(builder.addExternalCallResults(encodeExternalCallResult(result)))
+              ),
+              EncodeError(
+                s"external call results are not supported by version ${node.version}"
+              ),
+            )
+          else
+            Right(())
       } yield builder.build()
+    }
+
+    private[this] def encodeExternalCallResult(
+        result: ExternalCallResult
+    ): TransactionOuterClass.ExternalCallResult = {
+      val builder = TransactionOuterClass.ExternalCallResult.newBuilder()
+      discard(builder.setExtensionId(result.extensionId))
+      discard(builder.setFunctionId(result.functionId))
+      discard(builder.setConfig(result.config.toByteString))
+      discard(builder.setInput(result.input.toByteString))
+      discard(builder.setOutput(result.output.toByteString))
+      builder.build()
     }
 
     private[this] def encodeQueryByKey(
@@ -536,6 +561,19 @@ class TransactionCoder(allowNullCharacters: Boolean) {
             Left(DecodeError(s"Exercise Authorizer not supported by version $nodeVersion"))
           else
             toPartySet(msg.getAuthorizersList).map(Some(_))
+        externalCallResults <-
+          if (msg.getExternalCallResultsCount == 0)
+            Right(ExternalCallResult.Empty)
+          else if (nodeVersion < SerializationVersion.minExternalCallResults)
+            Left(DecodeError(s"External call results not supported by version $nodeVersion"))
+          else
+            msg.getExternalCallResultsList.asScala
+              .foldLeft[Either[DecodeError, Vector[ExternalCallResult]]](Right(Vector.empty)) {
+                case (Right(acc), result) =>
+                  decodeExternalCallResult(result).map(acc :+ _)
+                case (left @ Left(_), _) => left
+              }
+              .map(ImmArray.from)
       } yield Node.Exercise(
         targetCoid = fetch.coid,
         packageName = fetch.packageName,
@@ -553,9 +591,23 @@ class TransactionCoder(allowNullCharacters: Boolean) {
         exerciseResult = result,
         keyOpt = fetch.keyOpt,
         byKey = fetch.byKey,
+        externalCallResults = externalCallResults,
         version = fetch.version,
       )
     }
+
+    private[this] def decodeExternalCallResult(
+        msg: TransactionOuterClass.ExternalCallResult
+    ): Either[DecodeError, ExternalCallResult] =
+      Right(
+        ExternalCallResult(
+          extensionId = msg.getExtensionId,
+          functionId = msg.getFunctionId,
+          config = data.Bytes.fromByteString(msg.getConfig),
+          input = data.Bytes.fromByteString(msg.getInput),
+          output = data.Bytes.fromByteString(msg.getOutput),
+        )
+      )
 
     private[this] def decodeQueryByKey(
         txVersion: SerializationVersion,

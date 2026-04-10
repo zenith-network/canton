@@ -81,10 +81,9 @@ object SerializationVersion {
     LanguageVersion.featureChoiceAuthority.versionRange.min
   )
 
-  // Minimum version that supports external call results in exercise nodes
-  private[lf] val minExternalCallResults = assign(
-    LanguageVersion.featureExternalCall.versionRange.min
-  )
+  // External call results are a dev-only transaction feature on this branch.
+  // The corresponding language feature gate lands later in the stack.
+  private[lf] val minExternalCallResults: SerializationVersion = VDev
 
   private[lf] def txVersion(tx: Transaction): SerializationVersion = {
     import scala.Ordering.Implicits._

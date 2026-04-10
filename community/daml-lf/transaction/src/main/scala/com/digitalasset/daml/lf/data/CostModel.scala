@@ -11,6 +11,7 @@ import com.digitalasset.daml.lf.transaction.{
   CreationTime,
   FatContractInstance,
   FatContractInstanceImpl,
+  ExternalCallResult,
   GlobalKey,
   GlobalKeyWithMaintainers,
   Node,
@@ -410,8 +411,16 @@ private[lf] object CostModel {
             exerciseResult,
             keyOpt,
             byKey,
+            externalCallResults,
             version,
           ) =>
+        implicit val costOfExternalCallResult: ExternalCallResult => Cost = result =>
+          costOfString(result.extensionId) +
+            costOfString(result.functionId) +
+            costOfBytes(result.config) +
+            costOfBytes(result.input) +
+            costOfBytes(result.output)
+
         1 + costOfContractId(targetCoid) +
           costOfString(packageName) +
           costOfIdentifier(templateId) +
@@ -428,6 +437,7 @@ private[lf] object CostModel {
           costOfOption(exerciseResult) +
           costOfOption(keyOpt) +
           costOfBoolean(byKey) +
+          costOfImmArray(externalCallResults) +
           costOfSerializationVersion(version)
       case Node.Rollback(children) =>
         1 + costOfImmArray(children)

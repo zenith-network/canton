@@ -217,7 +217,7 @@ object Node {
       exerciseResult: Option[Value],
       keyOpt: Option[GlobalKeyWithMaintainers],
       override val byKey: Boolean,
-      externalCallResults: ImmArray[ExternalCallResult],
+      externalCallResults: ImmArray[ExternalCallResult] = ExternalCallResult.Empty,
       // For the sake of consistency between types with a version field, keep this field the last.
       override val version: SerializationVersion,
   ) extends Action
