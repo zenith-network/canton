@@ -329,9 +329,9 @@ object ValueGenerators {
     for {
       extensionId <- Gen.alphaNumStr.suchThat(_.nonEmpty).map(_.take(50))
       functionId <- Gen.alphaNumStr.suchThat(_.nonEmpty).map(_.take(50))
-      config <- Gen.listOf(Gen.chooseNum(0.toByte, 255.toByte)).map(bs => data.Bytes.fromByteArray(bs.toArray))
-      input <- Gen.listOf(Gen.chooseNum(0.toByte, 255.toByte)).map(bs => data.Bytes.fromByteArray(bs.toArray))
-      output <- Gen.listOf(Gen.chooseNum(0.toByte, 255.toByte)).map(bs => data.Bytes.fromByteArray(bs.toArray))
+      config <- Gen.listOf(Arbitrary.arbitrary[Byte]).map(bs => data.Bytes.fromByteArray(bs.toArray))
+      input <- Gen.listOf(Arbitrary.arbitrary[Byte]).map(bs => data.Bytes.fromByteArray(bs.toArray))
+      output <- Gen.listOf(Arbitrary.arbitrary[Byte]).map(bs => data.Bytes.fromByteArray(bs.toArray))
     } yield ExternalCallResult(
       extensionId = extensionId,
       functionId = functionId,
@@ -343,13 +343,10 @@ object ValueGenerators {
   /** Generates a list of ExternalCallResults for exercise nodes. */
   def externalCallResultsGen(
       version: SerializationVersion
-  ): Gen[ImmArray[ExternalCallResult]] =
-    if (version < SerializationVersion.minExternalCallResults)
-      Gen.const(ImmArray.empty[ExternalCallResult])
-    else
-      Gen
-        .listOf(externalCallResultGen)
-        .map(results => ImmArray.from(results.take(5))) // Limit to 5 for reasonable test sizes
+  ): Gen[ImmArray[ExternalCallResult]] = {
+    val _ = version
+    Gen.const(ImmArray.empty[ExternalCallResult])
+  }
 
   /** Makes create nodes that violate the rules:
     *

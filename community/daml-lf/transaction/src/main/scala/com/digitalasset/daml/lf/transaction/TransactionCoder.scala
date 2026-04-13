@@ -553,6 +553,7 @@ class TransactionCoder(allowNullCharacters: Boolean) {
         exerciseResult = result,
         keyOpt = fetch.keyOpt,
         byKey = fetch.byKey,
+        externalCallResults = ExternalCallResult.Empty,
         version = fetch.version,
       )
     }

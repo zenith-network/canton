@@ -136,6 +136,7 @@ object ActionDescription extends VersioningCompanion[ActionDescription] {
             exerciseResult,
             _key,
             byKey,
+            _externalCallResults,
             version,
           ) =>
         for {

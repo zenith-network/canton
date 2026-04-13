@@ -602,6 +602,7 @@ private[speedy] case class PartialTransaction(
       exerciseResult = None,
       keyOpt = ec.contractKey,
       byKey = normByKey(ec.version, ec.byKey),
+      externalCallResults = ImmArray.empty,
       version = ec.version,
     )
   }
