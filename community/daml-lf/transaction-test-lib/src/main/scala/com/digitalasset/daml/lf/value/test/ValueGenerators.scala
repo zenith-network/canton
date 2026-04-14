@@ -343,10 +343,13 @@ object ValueGenerators {
   /** Generates a list of ExternalCallResults for exercise nodes. */
   def externalCallResultsGen(
       version: SerializationVersion
-  ): Gen[ImmArray[ExternalCallResult]] = {
-    val _ = version
-    Gen.const(ImmArray.empty[ExternalCallResult])
-  }
+  ): Gen[ImmArray[ExternalCallResult]] =
+    if (version < SerializationVersion.minExternalCallResults)
+      Gen.const(ImmArray.empty[ExternalCallResult])
+    else
+      Gen
+        .listOf(externalCallResultGen)
+        .map(results => ImmArray.from(results.take(5))) // Limit to 5 for reasonable test sizes
 
   /** Makes create nodes that violate the rules:
     *
