@@ -476,7 +476,7 @@ final class StoreBackedCommandInterpreter(
               configHash,
               input,
               "submission",
-              commands.commandId.unwrap,
+              commands.submissionId.map(_.unwrap).getOrElse(commands.commandId.unwrap),
             )
             .flatMap { result =>
               resolveStep(
