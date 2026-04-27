@@ -4691,7 +4691,9 @@ External call functions
   second argument is the function identifier, the third argument is the
   hexadecimal-encoded configuration hash, and the fourth argument is the
   hexadecimal-encoded input payload. The result is the hexadecimal-encoded
-  output payload.
+  output payload. Evaluation fails with an error if the configuration hash or
+  input payload is not valid hexadecimal, or if the external call cannot be
+  completed successfully.
 
   [*Available in version ≥ 2.dev*]
 
@@ -5044,10 +5046,10 @@ program exception using:
 External Call
 .............
 
-[*Available in version >= 2.dev*]
+[*Available in versions >= 2.dev*]
 
-The deserialization process will reject any Daml-LF program with a version
-before 2.dev that uses the builtin function ``EXTERNAL_CALL``.
+The deserialization process will reject any Daml-LF program whose language
+version is before 2.dev and that uses the builtin function ``EXTERNAL_CALL``.
 
 .. Local Variables:
 .. eval: (flyspell-mode 1)
