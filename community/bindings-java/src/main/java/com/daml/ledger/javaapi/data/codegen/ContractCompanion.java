@@ -121,6 +121,27 @@ public abstract class ContractCompanion<Ct, Id, Data>
       this.newContract = newContract;
     }
 
+    /** Compatibility constructor for newer generated Java bindings. */
+    public WithoutKey(
+        ContractTypeCompanion.Package packageInfo,
+        String templateClassName,
+        Identifier templateId,
+        Function<String, Id> newContractId,
+        FromJson<Data> fromJson,
+        NewContract<Ct, Id, Data> newContract,
+        List<Choice<Data, ?, ?>> choices,
+        ValueDecoder<Data> valueDecoder) {
+      this(
+          packageInfo,
+          templateClassName,
+          templateId,
+          newContractId,
+          record -> valueDecoder.decode(record),
+          fromJson,
+          newContract,
+          choices);
+    }
+
     public Ct fromIdAndRecord(
         String contractId, DamlRecord record$, Set<String> signatories, Set<String> observers) {
       Id id = newContractId.apply(contractId);
@@ -171,6 +192,29 @@ public abstract class ContractCompanion<Ct, Id, Data>
           packageInfo, templateClassName, templateId, newContractId, fromValue, fromJson, choices);
       this.newContract = newContract;
       this.keyFromValue = keyFromValue;
+    }
+
+    /** Compatibility constructor for newer generated Java bindings. */
+    public WithKey(
+        ContractTypeCompanion.Package packageInfo,
+        String templateClassName,
+        Identifier templateId,
+        Function<String, Id> newContractId,
+        FromJson<Data> fromJson,
+        NewContract<Ct, Id, Data, Key> newContract,
+        List<Choice<Data, ?, ?>> choices,
+        ValueDecoder<Data> valueDecoder,
+        Function<Value, Key> keyFromValue) {
+      this(
+          packageInfo,
+          templateClassName,
+          templateId,
+          newContractId,
+          record -> valueDecoder.decode(record),
+          fromJson,
+          newContract,
+          choices,
+          keyFromValue);
     }
 
     public Ct fromIdAndRecord(

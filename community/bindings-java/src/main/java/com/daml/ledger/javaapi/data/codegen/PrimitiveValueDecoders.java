@@ -191,6 +191,15 @@ public final class PrimitiveValueDecoders {
     return fields;
   }
 
+  /** Compatibility helper for newer generated Java bindings. */
+  public static PreparedRecord checkAndPrepareRecord(
+      int expectedFields,
+      int trailingOptionalFields,
+      Value maybeRecord,
+      UnknownTrailingFieldPolicy policy) {
+    return new PreparedRecord(recordCheck(expectedFields, trailingOptionalFields, maybeRecord));
+  }
+
   /**
    * <strong>INTERNAL API</strong>: this is meant for use by <a
    * href="https://docs.daml.com/app-dev/bindings-java/codegen.html">the Java code generator</a>,

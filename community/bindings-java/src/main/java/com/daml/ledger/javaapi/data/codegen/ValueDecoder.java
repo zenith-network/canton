@@ -36,8 +36,18 @@ import com.daml.ledger.javaapi.data.Value;
  */
 @FunctionalInterface
 public interface ValueDecoder<Data> {
+  @FunctionalInterface
+  interface DecoderWithPolicy<Data> {
+    Data decode(Value value, UnknownTrailingFieldPolicy policy);
+  }
+
   /** @see ValueDecoder */
   Data decode(Value value);
+
+  /** Compatibility overload for newer generated Java bindings. */
+  default Data decode(Value value, UnknownTrailingFieldPolicy policy) {
+    return decode(value);
+  }
 
   /**
    * <strong>INTERNAL API</strong>: this is meant for use by <a
@@ -49,5 +59,20 @@ public interface ValueDecoder<Data> {
    */
   default ContractId<Data> fromContractId(String contractId) {
     throw new IllegalArgumentException("Cannot create contract id for this data type");
+  }
+
+  /** Compatibility factory for newer generated Java bindings. */
+  static <Data> ValueDecoder<Data> create(DecoderWithPolicy<Data> decoder) {
+    return new ValueDecoder<>() {
+      @Override
+      public Data decode(Value value) {
+        return decoder.decode(value, UnknownTrailingFieldPolicy.STRICT);
+      }
+
+      @Override
+      public Data decode(Value value, UnknownTrailingFieldPolicy policy) {
+        return decoder.decode(value, policy);
+      }
+    };
   }
 }
