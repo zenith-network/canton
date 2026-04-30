@@ -386,11 +386,6 @@ private[lf] final class PhaseOne(
       case BCoerceContractId => compileIdentity(env)
       case BTextMapEmpty => SEValue.EmptyTextMap
       case BGenMapEmpty => SEValue.EmptyGenMap
-      // BExternalCall exists in LF, but not in the interpreter yet.
-      // TODO(#513): Replace this fail-fast once external-call execution support is added.
-      // Keep this match exhaustive until execution support is added.
-      case BExternalCall =>
-        throw CompilationError("EXTERNAL_CALL is not yet supported by the interpreter")
 
       case _ =>
         SEBuiltin(bf match {
@@ -449,6 +444,9 @@ private[lf] final class PhaseOne(
           case BSECP256K1Bool => SBSECP256K1Bool
           case BSECP256K1WithEcdsaBool => SBSECP256K1WithEcdsaBool
           case BSECP256K1ValidateKey => SBSECP256K1ValidateKey
+
+          // External call
+          case BExternalCall => SBExternalCall
 
           // TextMap
 

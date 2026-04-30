@@ -463,6 +463,7 @@ class Engine(
       packageResolution = packageResolution,
       limits = config.limits,
       iterationsBetweenInterruptions = config.iterationsBetweenInterruptions,
+      costModel = config.getInterpreterCostModel,
       initialGasBudget = config.gasBudget,
       metricPlugins = metricPlugins,
       logger = machineLogger(validating),
@@ -772,6 +773,21 @@ class Engine(
                     )
                   )
               }
+
+            case Question.Update.NeedExternalCall(extensionId, functionId, configHash, input, callback) =>
+              ResultNeedExternalCall(
+                extensionId,
+                functionId,
+                configHash,
+                input,
+                { (result: Either[ExternalCallError, String]) =>
+                  val speedyResult = result.left.map(e =>
+                    Question.Update.ExternalCallError(e.statusCode, e.message, e.requestId)
+                  )
+                  callback(speedyResult)
+                  interpretLoop(machine, time, submissionInfo)
+                },
+              )
           }
 
         case SResultInterruption =>
