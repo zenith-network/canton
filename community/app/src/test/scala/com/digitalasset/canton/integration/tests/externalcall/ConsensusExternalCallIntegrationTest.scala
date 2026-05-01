@@ -18,12 +18,11 @@ import scala.jdk.CollectionConverters.*
 
 /** Integration tests for consensus behavior with external calls.
   *
-  * These tests address the reviewer requirement:
-  * "A test whereby the http service on the confirming participant doesn't return
-  *  the same result as the http service on the preparing participant"
+  * These tests address the reviewer requirement: "A test whereby the http service on the confirming
+  * participant doesn't return the same result as the http service on the preparing participant"
   *
-  * Tests scenarios where participants may receive different results from external calls
-  * and verify consensus behavior in such situations.
+  * Tests scenarios where participants may receive different results from external calls and verify
+  * consensus behavior in such situations.
   */
 sealed trait ConsensusExternalCallIntegrationTest
     extends CommunityIntegrationTest
@@ -83,17 +82,22 @@ sealed trait ConsensusExternalCallIntegrationTest
           java.util.List.of(bob.toProtoPrimitive), // Bob as observer
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise external call - both participants should validate and get same result
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       // Transaction should succeed - all participants got identical results
@@ -107,7 +111,7 @@ sealed trait ConsensusExternalCallIntegrationTest
       // The mock server uses the request ID to differentiate participants for now
       // This is a limitation - in real Canton, participant ID would be properly sent
       val resultCounter = new java.util.concurrent.atomic.AtomicInteger(0)
-      
+
       mockServer.setHandler("inconsistent") { _ =>
         val count = resultCounter.incrementAndGet()
         val result = if (count % 2 == 1) {
@@ -131,18 +135,23 @@ sealed trait ConsensusExternalCallIntegrationTest
           java.util.List.of(bob.toProtoPrimitive),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise external call - participants will get different results
       val exception = intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "inconsistent",
-            "00000000",
-            inputHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "inconsistent",
+              "00000000",
+              inputHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
       }
 
@@ -150,9 +159,9 @@ sealed trait ConsensusExternalCallIntegrationTest
       val errorDetail = exception.toString
       errorDetail should (
         include("INCONSISTENT") or
-        include("mismatch") or
-        include("LOCAL_VERDICT") or
-        include("Command execution failed")
+          include("mismatch") or
+          include("LOCAL_VERDICT") or
+          include("Command execution failed")
       )
     }
 
@@ -161,13 +170,13 @@ sealed trait ConsensusExternalCallIntegrationTest
 
       // Similar to above but with 3 participants
       val resultCounter = new java.util.concurrent.atomic.AtomicInteger(0)
-      
+
       mockServer.setHandler("multi-disagreement") { _ =>
         val count = resultCounter.incrementAndGet()
         val result = count match {
-          case 1 => toHex("result-from-p1")  // Preparer gets this
-          case 2 => toHex("result-from-p2")  // First confirmer gets this
-          case _ => toHex("result-from-p3")  // Second confirmer gets this
+          case 1 => toHex("result-from-p1") // Preparer gets this
+          case 2 => toHex("result-from-p2") // First confirmer gets this
+          case _ => toHex("result-from-p3") // Second confirmer gets this
         }
         ExternalCallResponse.ok(result.getBytes)
       }
@@ -186,27 +195,32 @@ sealed trait ConsensusExternalCallIntegrationTest
           java.util.List.of(bob.toProtoPrimitive, charlie.toProtoPrimitive),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise external call - all three participants will get different results
       val exception = intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "multi-disagreement",
-            "00000000",
-            inputHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "multi-disagreement",
+              "00000000",
+              inputHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
       }
 
       val errorDetail = exception.toString
       errorDetail should (
         include("INCONSISTENT") or
-        include("mismatch") or
-        include("LOCAL_VERDICT") or
-        include("Command execution failed")
+          include("mismatch") or
+          include("LOCAL_VERDICT") or
+          include("Command execution failed")
       )
     }
 
@@ -215,7 +229,7 @@ sealed trait ConsensusExternalCallIntegrationTest
 
       // Setup counter to verify HTTP calls are minimized for observers
       val callCounter = new java.util.concurrent.atomic.AtomicInteger(0)
-      
+
       mockServer.setHandler("observer-test") { req =>
         callCounter.incrementAndGet()
         ExternalCallResponse.ok(req.input) // Echo back the input
@@ -234,7 +248,8 @@ sealed trait ConsensusExternalCallIntegrationTest
           java.util.List.of(bob.toProtoPrimitive),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Reset call counter before the test
       callCounter.set(0)
@@ -242,12 +257,16 @@ sealed trait ConsensusExternalCallIntegrationTest
       // Exercise external call
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "observer-test",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "observer-test",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       // Transaction should succeed
@@ -260,9 +279,9 @@ sealed trait ConsensusExternalCallIntegrationTest
         exerciseTx.getUpdateId should not be empty
       }
 
-      // The key insight: observers should use stored results rather than making new HTTP calls
-      // In the current implementation, this means external calls should still be made by observers
-      // but they validate against stored results. The exact call count depends on implementation.
+    // The key insight: observers should use stored results rather than making new HTTP calls
+    // In the current implementation, this means external calls should still be made by observers
+    // but they validate against stored results. The exact call count depends on implementation.
     }
 
   }

@@ -17,15 +17,15 @@ import scala.jdk.CollectionConverters.*
 
 /** Integration tests for external calls in multi-view transactions.
   *
-  * These tests address the reviewer requirement:
-  * "A test involving composed transactions (multiple views)"
-  * "A test involving external calls in root nodes as well as in leaf nodes and in the middle"
+  * These tests address the reviewer requirement: "A test involving composed transactions (multiple
+  * views)" "A test involving external calls in root nodes as well as in leaf nodes and in the
+  * middle"
   *
   * Tests:
-  * - Same informees -> single view with multiple external calls
-  * - Different informees -> multiple views with external calls
-  * - External calls at root, middle, and leaf nodes
-  * - Multiple views each with their own external calls
+  *   - Same informees -> single view with multiple external calls
+  *   - Different informees -> multiple views with external calls
+  *   - External calls at root, middle, and leaf nodes
+  *   - Multiple views each with their own external calls
   */
 sealed trait MultiViewExternalCallIntegrationTest
     extends CommunityIntegrationTest
@@ -72,36 +72,46 @@ sealed trait MultiViewExternalCallIntegrationTest
 
   "multi-view transactions" should {
 
-    "handle external calls when all exercises have same informees (single view)" in { implicit env =>
-      import env.*
+    "handle external calls when all exercises have same informees (single view)" in {
+      implicit env =>
+        import env.*
 
-      setupEchoHandler()
+        setupEchoHandler()
 
-      val input1Hex = toHex("view-input1")
-      val input2Hex = toHex("view-input2")
+        val input1Hex = toHex("view-input1")
+        val input2Hex = toHex("view-input2")
 
-      clue("Create ExternalCallContract with alice as sole signatory") {
-        val createTx = participant1.ledger_api.javaapi.commands.submit(
-          Seq(alice),
-          new E.ExternalCallContract(
-            alice.toProtoPrimitive,
-            java.util.List.of(),
-          ).create.commands.asScala.toSeq,
-        )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
-
-        clue("Exercise NestedExternalCall with innerActor=alice (same informees -> single view)") {
-          val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
+        clue("Create ExternalCallContract with alice as sole signatory") {
+          val createTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            contractId.exerciseNestedExternalCall(
+            new E.ExternalCallContract(
               alice.toProtoPrimitive,
-              input1Hex,
-              input2Hex,
-            ).commands.asScala.toSeq,
+              java.util.List.of(),
+            ).create.commands.asScala.toSeq,
           )
-          exerciseTx.getUpdateId should not be empty
+          val contractId = JavaDecodeUtil
+            .decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx)
+            .loneElement
+            .id
+
+          clue(
+            "Exercise NestedExternalCall with innerActor=alice (same informees -> single view)"
+          ) {
+            val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
+              Seq(alice),
+              contractId
+                .exerciseNestedExternalCall(
+                  alice.toProtoPrimitive,
+                  input1Hex,
+                  input2Hex,
+                )
+                .commands
+                .asScala
+                .toSeq,
+            )
+            exerciseTx.getUpdateId should not be empty
+          }
         }
-      }
     }
 
     "handle external calls when nested exercises have different informees (multiple views)" in {
@@ -161,17 +171,22 @@ sealed trait MultiViewExternalCallIntegrationTest
             java.util.List.of(),
           ).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise CallExternal — external call only at root level") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            contractId.exerciseCallExternal(
-              "test-ext",
-              "echo",
-              "00000000",
-              inputHex,
-            ).commands.asScala.toSeq,
+            contractId
+              .exerciseCallExternal(
+                "test-ext",
+                "echo",
+                "00000000",
+                inputHex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
           exerciseTx.getUpdateId should not be empty
         }
@@ -193,7 +208,8 @@ sealed trait MultiViewExternalCallIntegrationTest
             java.util.List.of(),
           ).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise CallInLeafOnly — no external call at root, call at leaf") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
@@ -220,7 +236,8 @@ sealed trait MultiViewExternalCallIntegrationTest
             java.util.List.of(),
           ).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise CallAtAllLevels — has root, middle, and leaf external calls") {
           // CallAtAllLevels exercises MiddleLevelCall which exercises LeafExternalCall
@@ -249,7 +266,8 @@ sealed trait MultiViewExternalCallIntegrationTest
             java.util.List.of(),
           ).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise CallAtAllLevels — external calls at root, middle, and leaf") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
@@ -314,16 +332,21 @@ sealed trait MultiViewExternalCallIntegrationTest
             java.util.List.of(),
           ).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise CallMultiple — three external calls aggregated in one view") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            contractId.exerciseCallMultiple(
-              input1Hex,
-              input2Hex,
-              input3Hex,
-            ).commands.asScala.toSeq,
+            contractId
+              .exerciseCallMultiple(
+                input1Hex,
+                input2Hex,
+                input3Hex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
           exerciseTx.getUpdateId should not be empty
         }

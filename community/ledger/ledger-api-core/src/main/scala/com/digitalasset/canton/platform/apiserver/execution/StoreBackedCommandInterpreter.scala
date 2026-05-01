@@ -96,6 +96,8 @@ final class StoreBackedCommandInterpreter(
   ): FutureUnlessShutdown[Either[ErrorCause, CommandInterpretationResult]] = {
     val interpretationTimeNanos = new AtomicLong(0L)
     val start = System.nanoTime()
+    val externalCallSubmissionId =
+      commands.submissionId.map(_.unwrap).getOrElse(commands.commandId.unwrap)
     for {
       ledgerTimeRecordTimeToleranceO <- dynParamGetter
         // TODO(i15313):
@@ -117,6 +119,7 @@ final class StoreBackedCommandInterpreter(
         interpretationTimeNanos,
         commands.commands.ledgerEffectiveTime,
         ledgerTimeRecordTimeToleranceO,
+        externalCallSubmissionId,
       )
 
     } yield submission.flatMap { case (updateTx, meta) =>
@@ -258,6 +261,7 @@ final class StoreBackedCommandInterpreter(
       interpretationTimeNanos: AtomicLong,
       ledgerEffectiveTime: Time.Timestamp,
       ledgerTimeRecordTimeToleranceO: Option[NonNegativeFiniteDuration],
+      externalCallSubmissionId: String,
   )(implicit
       loggingContext: LoggingContextWithTrace
   ): FutureUnlessShutdown[Either[ErrorCause, A]] = {
@@ -476,7 +480,7 @@ final class StoreBackedCommandInterpreter(
               configHash,
               input,
               "submission",
-              commands.submissionId.map(_.unwrap).getOrElse(commands.commandId.unwrap),
+              externalCallSubmissionId,
             )
             .flatMap { result =>
               resolveStep(

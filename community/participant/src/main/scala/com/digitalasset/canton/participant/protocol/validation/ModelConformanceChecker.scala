@@ -261,7 +261,7 @@ class ModelConformanceChecker(
     // in nested exercises (child views) but need to be replayed when reinterpreting the parent view.
     val storedExternalCallResults: StoredExternalCallResults = {
       // Helper to extract results from a single view's action description
-      def extractFromView(v: TransactionView): StoredExternalCallResults = {
+      def extractFromView(v: TransactionView): StoredExternalCallResults =
         v.viewParticipantData.unwrap match {
           case Right(vpd) =>
             vpd.actionDescription match {
@@ -274,7 +274,6 @@ class ModelConformanceChecker(
             // Blinded view - no data available
             StoredExternalCallResults.empty
         }
-      }
 
       // Collect results from this view AND all subviews (flatten includes this view as first element)
       val allViewResults = view.flatten.map(extractFromView)

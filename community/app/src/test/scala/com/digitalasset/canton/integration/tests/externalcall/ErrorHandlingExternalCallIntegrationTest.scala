@@ -19,13 +19,13 @@ import scala.jdk.CollectionConverters.*
 /** Integration tests for error handling in external calls.
   *
   * Tests:
-  * - HTTP 4xx errors (400, 401, 403, 404)
-  * - HTTP 5xx errors (500, 502, 503, 504)
-  * - Connection timeout
-  * - Request timeout
-  * - Service unavailable (connection refused)
-  * - Unknown extension ID
-  * - Unknown function ID
+  *   - HTTP 4xx errors (400, 401, 403, 404)
+  *   - HTTP 5xx errors (500, 502, 503, 504)
+  *   - Connection timeout
+  *   - Request timeout
+  *   - Service unavailable (connection refused)
+  *   - Unknown extension ID
+  *   - Unknown function ID
   */
 sealed trait ErrorHandlingExternalCallIntegrationTest
     extends CommunityIntegrationTest
@@ -80,8 +80,6 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
     JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
   }
 
-
-
   "error handling for external calls" should {
 
     // === HTTP 4xx Client Errors ===
@@ -93,7 +91,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-400", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-400", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -105,7 +107,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-401", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-401", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -117,7 +123,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-403", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-403", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -129,7 +139,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-404", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-404", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -143,7 +157,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-500", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-500", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -155,7 +173,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-502", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-502", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -167,7 +189,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-503", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-503", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -179,7 +205,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-504", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-504", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -191,13 +221,18 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       // Set handler that sleeps longer than request timeout (10 seconds)
       mockServer.setHandler("timeout-test") { _ =>
         Thread.sleep(15000)
-        com.digitalasset.canton.integration.tests.externalcall.ExternalCallResponse.ok("Should not reach here")
+        com.digitalasset.canton.integration.tests.externalcall.ExternalCallResponse
+          .ok("Should not reach here")
       }
       val contractId = createExternalCallContract()
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "timeout-test", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "timeout-test", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -213,12 +248,16 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "dead-ext",
-            "any-function",
-            "00000000",
-            toHex("connection-refused-test"),
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "dead-ext",
+              "any-function",
+              "00000000",
+              toHex("connection-refused-test"),
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -231,7 +270,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("unknown-ext", "any-function", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("unknown-ext", "any-function", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -243,7 +286,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "unknown-function", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "unknown-function", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -258,7 +305,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       val exception = intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-with-message", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-with-message", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
       // Note: The exact error propagation mechanism may require checking the exception details
@@ -273,7 +324,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-empty", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-empty", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -286,7 +341,11 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "error-large", "00000000", toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "error-large", "00000000", toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }
@@ -296,22 +355,30 @@ sealed trait ErrorHandlingExternalCallIntegrationTest
     "allow subsequent calls after error" in { implicit env =>
       import env.*
       val contractId = createExternalCallContract()
-      
+
       // First call fails
       mockServer.setErrorHandler("recovery-test", 500, "Temporary error")
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "recovery-test", "00000000", toHex("test1")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "recovery-test", "00000000", toHex("test1"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
-      
+
       // Second call succeeds
       mockServer.setEchoHandler("recovery-test-success")
       noException should be thrownBy {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal("test-ext", "recovery-test-success", "00000000", toHex("test2")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal("test-ext", "recovery-test-success", "00000000", toHex("test2"))
+            .commands
+            .asScala
+            .toSeq,
         )
       }
     }

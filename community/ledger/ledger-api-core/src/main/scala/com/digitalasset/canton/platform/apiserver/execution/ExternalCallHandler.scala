@@ -7,9 +7,9 @@ import com.digitalasset.canton.lifecycle.FutureUnlessShutdown
 import com.digitalasset.canton.tracing.TraceContext
 import com.digitalasset.daml.lf.engine.ExternalCallError
 
-/** Handler for external calls made during Daml contract execution.
-  * External calls are deterministic HTTP calls to extension services
-  * that are recorded in the transaction for replay during validation.
+/** Handler for external calls made during Daml contract execution. External calls are deterministic
+  * HTTP calls to extension services that are recorded in the transaction for replay during
+  * validation.
   */
 trait ExternalCallHandler {
   def handleExternalCall(

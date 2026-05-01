@@ -15,22 +15,22 @@ import com.digitalasset.canton.integration.{
 import com.digitalasset.canton.participant.ledger.api.client.JavaDecodeUtil
 
 import scala.jdk.CollectionConverters.*
-import java.util.concurrent.atomic.AtomicInteger
 
 /** Integration tests for per-party external call consistency checking.
   *
   * These tests verify the per-party consistency checking behavior described in
   * EXTERNAL_CALL_CONSISTENCY.md:
   *
-  * - Two external calls are "equal" if they have the same (extensionId, functionId, configHash, inputHex)
-  * - Each party validates consistency of all equal calls where they are a signatory
-  * - Different parties may see different results based on their signatory relationships
-  * - Inconsistent results produce LOCAL_VERDICT_EXTERNAL_CALL_INCONSISTENCY rejection
+  *   - Two external calls are "equal" if they have the same (extensionId, functionId, configHash,
+  *     inputHex)
+  *   - Each party validates consistency of all equal calls where they are a signatory
+  *   - Different parties may see different results based on their signatory relationships
+  *   - Inconsistent results produce LOCAL_VERDICT_EXTERNAL_CALL_INCONSISTENCY rejection
   *
   * Test Scenarios:
-  * 1. Same call, same output → all parties approve
-  * 2. Same call, different output → signatories of both calls reject
-  * 3. Same call, different signatories, different output → party in both rejects, party in one approves
+  *   1. Same call, same output → all parties approve 2. Same call, different output → signatories
+  *      of both calls reject 3. Same call, different signatories, different output → party in both
+  *      rejects, party in one approves
   */
 sealed trait ExternalCallConsistencyIntegrationTest
     extends CommunityIntegrationTest
@@ -97,17 +97,22 @@ sealed trait ExternalCallConsistencyIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise external call
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       // Transaction should succeed
@@ -141,14 +146,16 @@ sealed trait ExternalCallConsistencyIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val proposalId = JavaDecodeUtil.decodeAllCreated(E.MultiPartyProposal.COMPANION)(proposalTx).loneElement.id
+      val proposalId =
+        JavaDecodeUtil.decodeAllCreated(E.MultiPartyProposal.COMPANION)(proposalTx).loneElement.id
 
       // Bob accepts the proposal
       val acceptTx = participant2.ledger_api.javaapi.commands.submit(
         Seq(bob),
         proposalId.exerciseAccept().commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.MultiPartyExternalCall.COMPANION)(acceptTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.MultiPartyExternalCall.COMPANION)(acceptTx).loneElement.id
 
       // Now exercise external call - both participants must validate
       // This should fail because participants return different results
@@ -168,11 +175,11 @@ sealed trait ExternalCallConsistencyIntegrationTest
       val errorDetail = exception.toString
       errorDetail should (
         include("INCONSISTENT") or
-        include("mismatch") or
-        include("disagree") or
-        include("LOCAL_VERDICT") or
-        include("CONFORMANCE") or
-        include("Command execution failed")  // Canton correctly rejected the transaction
+          include("mismatch") or
+          include("disagree") or
+          include("LOCAL_VERDICT") or
+          include("CONFORMANCE") or
+          include("Command execution failed") // Canton correctly rejected the transaction
       )
     }
 
@@ -183,15 +190,23 @@ sealed trait ExternalCallConsistencyIntegrationTest
 
       val createTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        new E.ExternalCallContract(alice.toProtoPrimitive, java.util.List.of(bob.toProtoPrimitive)).create.commands.asScala.toSeq,
+        new E.ExternalCallContract(
+          alice.toProtoPrimitive,
+          java.util.List.of(bob.toProtoPrimitive),
+        ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
-      
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal("test-ext", "echo", "00000000", toHex("multi-party")).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal("test-ext", "echo", "00000000", toHex("multi-party"))
+          .commands
+          .asScala
+          .toSeq,
       )
-      
+
       exerciseTx.getUpdateId should not be empty
     }
 
@@ -229,18 +244,23 @@ sealed trait ExternalCallConsistencyIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise - both hosting participants validate
       // With echo handler, both should get same result → transaction succeeds
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       exerciseTx.getUpdateId should not be empty
@@ -261,17 +281,22 @@ sealed trait ExternalCallConsistencyIntegrationTest
           java.util.List.of(bob.toProtoPrimitive), // Bob is observer
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise external call - alice is signatory, bob is observer
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       // Transaction should succeed - bob doesn't validate external calls
@@ -315,7 +340,8 @@ sealed trait ExternalCallConsistencyIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
@@ -339,11 +365,16 @@ sealed trait ExternalCallConsistencyIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal("test-ext", "echo", "00000000", toHex("count")).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal("test-ext", "echo", "00000000", toHex("count"))
+          .commands
+          .asScala
+          .toSeq,
       )
 
       mockServer.getCallCount("echo") should be >= 1
@@ -353,8 +384,7 @@ sealed trait ExternalCallConsistencyIntegrationTest
 
 // Database-specific test variants
 
-class ExternalCallConsistencyIntegrationTestH2
-    extends ExternalCallConsistencyIntegrationTest {
+class ExternalCallConsistencyIntegrationTestH2 extends ExternalCallConsistencyIntegrationTest {
   registerPlugin(new UseH2(loggerFactory))
   registerPlugin(new UseBftSequencer(loggerFactory))
 }

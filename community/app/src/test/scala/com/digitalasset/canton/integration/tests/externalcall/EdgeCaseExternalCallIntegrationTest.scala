@@ -19,13 +19,13 @@ import scala.jdk.CollectionConverters.*
 /** Integration tests for edge cases in external calls.
   *
   * Tests:
-  * - Empty input/output
-  * - Large payloads (100KB+)
-  * - All byte values (0x00-0xFF)
-  * - Unicode handling
-  * - Config hash edge cases
-  * - Concurrent external calls
-  * - Request metadata
+  *   - Empty input/output
+  *   - Large payloads (100KB+)
+  *   - All byte values (0x00-0xFF)
+  *   - Unicode handling
+  *   - Config hash edge cases
+  *   - Concurrent external calls
+  *   - Request metadata
   */
 sealed trait EdgeCaseExternalCallIntegrationTest
     extends CommunityIntegrationTest
@@ -122,12 +122,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise with handler returning empty response") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "empty-output",
-            "00000000",
-            toHex("test"),
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "empty-output",
+              "00000000",
+              toHex("test"),
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -166,12 +170,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise with 100KB input payload") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "large-input",
-            "00000000",
-            largeInputHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "large-input",
+              "00000000",
+              largeInputHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -191,12 +199,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise with handler returning 100KB response") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "large-output",
-            "00000000",
-            toHex("small-input"),
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "large-output",
+              "00000000",
+              toHex("small-input"),
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -215,12 +227,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise with 1MB round-trip payload") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "megabyte",
-            "00000000",
-            megabyteHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "megabyte",
+              "00000000",
+              megabyteHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -242,12 +258,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise with all 256 byte values") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "all-bytes",
-            "00000000",
-            allBytesHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "all-bytes",
+              "00000000",
+              allBytesHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -267,12 +287,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise with embedded null bytes") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "nulls",
-            "00000000",
-            nullBytesHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "nulls",
+              "00000000",
+              nullBytesHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -293,12 +317,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise with unicode text hex-encoded") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "unicode",
-            "00000000",
-            unicodeHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "unicode",
+              "00000000",
+              unicodeHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -317,12 +345,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise with emoji hex-encoded") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "emoji",
-            "00000000",
-            emojiHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "emoji",
+              "00000000",
+              emojiHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -340,12 +372,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise with hyphenated function ID") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "get-price",
-            "00000000",
-            toHex("test"),
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "get-price",
+              "00000000",
+              toHex("test"),
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -364,7 +400,11 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise CallWithConfigHash with very long config hash") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallWithConfigHash(longConfigHash, toHex("test")).commands.asScala.toSeq,
+          contractId
+            .exerciseCallWithConfigHash(longConfigHash, toHex("test"))
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -419,16 +459,30 @@ sealed trait EdgeCaseExternalCallIntegrationTest
 
         val exerciseTx1 = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId1.exerciseCallExternal(
-            "test-ext", "echo", "00000000", toHex("concurrent-1"),
-          ).commands.asScala.toSeq,
+          contractId1
+            .exerciseCallExternal(
+              "test-ext",
+              "echo",
+              "00000000",
+              toHex("concurrent-1"),
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
 
         val exerciseTx2 = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId2.exerciseCallExternal(
-            "test-ext", "echo", "00000000", toHex("concurrent-2"),
-          ).commands.asScala.toSeq,
+          contractId2
+            .exerciseCallExternal(
+              "test-ext",
+              "echo",
+              "00000000",
+              toHex("concurrent-2"),
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
 
         exerciseTx1.getUpdateId should not be empty
@@ -449,12 +503,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
         intercept[CommandFailure] {
           participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            contractId.exerciseCallExternal(
-              "test-ext",
-              "echo",
-              "00000000",
-              "abc", // Odd length — invalid hex
-            ).commands.asScala.toSeq,
+            contractId
+              .exerciseCallExternal(
+                "test-ext",
+                "echo",
+                "00000000",
+                "abc", // Odd length — invalid hex
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
         }
       }
@@ -471,12 +529,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
         intercept[CommandFailure] {
           participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            contractId.exerciseCallExternal(
-              "test-ext",
-              "echo",
-              "00000000",
-              "xyz123", // Non-hex chars
-            ).commands.asScala.toSeq,
+            contractId
+              .exerciseCallExternal(
+                "test-ext",
+                "echo",
+                "00000000",
+                "xyz123", // Non-hex chars
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
         }
       }
@@ -494,12 +556,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
       clue("Exercise with lowercase hex") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "hex-case",
-            "00000000",
-            "abcdef",
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "hex-case",
+              "00000000",
+              "abcdef",
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -521,15 +587,19 @@ sealed trait EdgeCaseExternalCallIntegrationTest
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "request-id",
-          "00000000",
-          toHex("metadata-test"),
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "request-id",
+            "00000000",
+            toHex("metadata-test"),
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
       exerciseTx.getUpdateId should not be empty
-      // Request ID may or may not be present depending on implementation
+    // Request ID may or may not be present depending on implementation
     }
 
     "include mode header in HTTP call" in { implicit env =>
@@ -546,12 +616,16 @@ sealed trait EdgeCaseExternalCallIntegrationTest
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "mode",
-          "00000000",
-          toHex("mode-test"),
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "mode",
+            "00000000",
+            toHex("mode-test"),
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
       exerciseTx.getUpdateId should not be empty
     }
@@ -576,16 +650,21 @@ sealed trait EdgeCaseExternalCallIntegrationTest
           java.util.List.of(bob.toProtoPrimitive),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "check-mode",
-          "00000000",
-          toHex("mode-check"),
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "check-mode",
+            "00000000",
+            toHex("mode-check"),
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
       exerciseTx.getUpdateId should not be empty
     }

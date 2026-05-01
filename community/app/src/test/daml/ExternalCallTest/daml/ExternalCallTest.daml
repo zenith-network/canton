@@ -418,6 +418,6 @@ toHexChars 0 acc = if acc == "" then "00" else acc
 toHexChars x acc = toHexChars (x / 16) (hexDigit (x % 16) <> acc)
 
 intToHex : Int -> Text
-intToHex n = 
+intToHex n =
   let raw = toHexChars (if n < 0 then 0 else n) ""
   in if DA.Text.length raw % 2 == 1 then "0" <> raw else raw

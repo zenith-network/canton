@@ -18,10 +18,10 @@ import scala.jdk.CollectionConverters.*
 /** Basic integration tests for external call functionality.
   *
   * Tests:
-  * - Single external call execution
-  * - Multiple external calls in one transaction
-  * - Observer replay without HTTP call
-  * - External call result storage in transaction
+  *   - Single external call execution
+  *   - Multiple external calls in one transaction
+  *   - Observer replay without HTTP call
+  *   - External call result storage in transaction
   */
 sealed trait BasicExternalCallIntegrationTest
     extends CommunityIntegrationTest
@@ -69,7 +69,7 @@ sealed trait BasicExternalCallIntegrationTest
 
     "execute a single external call and return the result" in { implicit env =>
       import env.*
-      
+
       setupEchoHandler()
 
       val inputHex = toHex("hello")
@@ -82,28 +82,33 @@ sealed trait BasicExternalCallIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise the CallExternal choice - should succeed with mock returning input
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       // Verify transaction succeeded
       exerciseTx.getUpdateId should not be empty
 
-      // Call count depends on number of confirming participants
+    // Call count depends on number of confirming participants
     }
 
     "execute multiple external calls in sequence" in { implicit env =>
       import env.*
-      
+
       setupEchoHandler()
 
       val input1Hex = toHex("first")
@@ -118,27 +123,32 @@ sealed trait BasicExternalCallIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise the CallMultiple choice - should succeed with mock
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallMultiple(
-          input1Hex,
-          input2Hex,
-          input3Hex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallMultiple(
+            input1Hex,
+            input2Hex,
+            input3Hex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       // Verify transaction succeeded
       exerciseTx.getUpdateId should not be empty
 
-      // Call count depends on number of confirming participants
+    // Call count depends on number of confirming participants
     }
 
     "allow observer to see transaction without making HTTP call" in { implicit env =>
       import env.*
-      
+
       setupEchoHandler()
 
       val inputHex = toHex("observable")
@@ -151,17 +161,22 @@ sealed trait BasicExternalCallIntegrationTest
           java.util.List.of(bob.toProtoPrimitive),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Alice exercises external call
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       // Verify transaction succeeded
@@ -176,14 +191,14 @@ sealed trait BasicExternalCallIntegrationTest
         activeContracts shouldBe empty
       }
 
-      // Signatory's participant should make HTTP call in submission mode
-      // Observer's participant should validate using stored result (no HTTP)
-      // Call count depends on number of confirming participants
+    // Signatory's participant should make HTTP call in submission mode
+    // Observer's participant should validate using stored result (no HTTP)
+    // Call count depends on number of confirming participants
     }
 
     "store external call result in the transaction" in { implicit env =>
       import env.*
-      
+
       setupEchoHandler()
 
       val inputHex = toHex("stored")
@@ -196,24 +211,29 @@ sealed trait BasicExternalCallIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise the CallExternal choice - if this succeeds, the result was stored
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       // The transaction should have completed successfully
       // which means the result was properly stored and returned
       exerciseTx.getUpdateId should not be empty
 
-      // Call count depends on number of confirming participants
+    // Call count depends on number of confirming participants
     }
 
     "correctly replay two identical calls with different results via callIndex" in { implicit env =>
@@ -222,7 +242,7 @@ sealed trait BasicExternalCallIntegrationTest
       setupEchoHandler()
 
       val input = toHex("identical")
-      
+
       // Create contract
       val createTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
@@ -231,13 +251,14 @@ sealed trait BasicExternalCallIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
         contractId.exerciseCallMultiple(input, input, input).commands.asScala.toSeq,
       )
-      
+
       exerciseTx.getUpdateId should not be empty
     }
   }

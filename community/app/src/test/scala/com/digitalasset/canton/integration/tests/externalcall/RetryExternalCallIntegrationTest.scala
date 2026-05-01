@@ -20,11 +20,11 @@ import scala.jdk.CollectionConverters.*
 /** Integration tests for retry logic in external calls.
   *
   * Tests:
-  * - Successful retry after transient failure
-  * - Max retries exhausted
-  * - Retry-After header handling (429)
-  * - Retry on specific error codes
-  * - Non-retriable client errors
+  *   - Successful retry after transient failure
+  *   - Max retries exhausted
+  *   - Retry-After header handling (429)
+  *   - Retry on specific error codes
+  *   - Non-retriable client errors
   */
 sealed trait RetryExternalCallIntegrationTest
     extends CommunityIntegrationTest
@@ -96,12 +96,16 @@ sealed trait RetryExternalCallIntegrationTest
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "transient-single",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "transient-single",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
       exerciseTx.getUpdateId should not be empty
       callCount.get() should be >= 2
@@ -125,12 +129,16 @@ sealed trait RetryExternalCallIntegrationTest
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "transient-multiple",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "transient-multiple",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
       exerciseTx.getUpdateId should not be empty
       callCount.get() should be >= 3
@@ -148,12 +156,16 @@ sealed trait RetryExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "always-fail",
-            "00000000",
-            inputHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "always-fail",
+              "00000000",
+              inputHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
       }
 
@@ -184,12 +196,16 @@ sealed trait RetryExternalCallIntegrationTest
       clue("Transaction should succeed after respecting Retry-After") {
         val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "rate-limited",
-            "00000000",
-            inputHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "rate-limited",
+              "00000000",
+              inputHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
         exerciseTx.getUpdateId should not be empty
       }
@@ -219,12 +235,16 @@ sealed trait RetryExternalCallIntegrationTest
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "service-unavailable",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "service-unavailable",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
       exerciseTx.getUpdateId should not be empty
       callCount.get() should be >= 2
@@ -244,12 +264,16 @@ sealed trait RetryExternalCallIntegrationTest
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "jitter-test",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "jitter-test",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
       exerciseTx.getUpdateId should not be empty
     }
@@ -271,12 +295,16 @@ sealed trait RetryExternalCallIntegrationTest
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        contractId.exerciseCallExternal(
-          "test-ext",
-          "bad-gateway",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        contractId
+          .exerciseCallExternal(
+            "test-ext",
+            "bad-gateway",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
       exerciseTx.getUpdateId should not be empty
       callCount.get() should be >= 2
@@ -294,12 +322,16 @@ sealed trait RetryExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "bad-request",
-            "00000000",
-            inputHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "bad-request",
+              "00000000",
+              inputHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
       }
 
@@ -319,12 +351,16 @@ sealed trait RetryExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "unauthorized",
-            "00000000",
-            inputHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "unauthorized",
+              "00000000",
+              inputHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
       }
 
@@ -343,12 +379,16 @@ sealed trait RetryExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "forbidden",
-            "00000000",
-            inputHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "forbidden",
+              "00000000",
+              inputHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
       }
 
@@ -367,12 +407,16 @@ sealed trait RetryExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "not-found",
-            "00000000",
-            inputHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "not-found",
+              "00000000",
+              inputHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
       }
 
@@ -395,12 +439,16 @@ sealed trait RetryExternalCallIntegrationTest
       intercept[CommandFailure] {
         participant1.ledger_api.javaapi.commands.submit(
           Seq(alice),
-          contractId.exerciseCallExternal(
-            "test-ext",
-            "slow-fail",
-            "00000000",
-            inputHex,
-          ).commands.asScala.toSeq,
+          contractId
+            .exerciseCallExternal(
+              "test-ext",
+              "slow-fail",
+              "00000000",
+              inputHex,
+            )
+            .commands
+            .asScala
+            .toSeq,
         )
       }
 
@@ -420,5 +468,3 @@ class RetryExternalCallIntegrationTestPostgres extends RetryExternalCallIntegrat
   registerPlugin(new UsePostgres(loggerFactory))
   registerPlugin(new UseBftSequencer(loggerFactory))
 }
-
-

@@ -17,14 +17,13 @@ import scala.jdk.CollectionConverters.*
 
 /** Integration tests for external calls in deep (deeply nested) transactions.
   *
-  * These tests address the reviewer requirement:
-  * "A test involving deep transactions"
+  * These tests address the reviewer requirement: "A test involving deep transactions"
   *
   * Tests:
-  * - 5 levels of nesting with external calls
-  * - 10 levels of nesting with external calls
-  * - Wide transaction with many external calls at single level
-  * - Both deep and wide (deep nesting + multiple calls per level)
+  *   - 5 levels of nesting with external calls
+  *   - 10 levels of nesting with external calls
+  *   - Wide transaction with many external calls at single level
+  *   - Both deep and wide (deep nesting + multiple calls per level)
   */
 sealed trait DeepTransactionExternalCallIntegrationTest
     extends CommunityIntegrationTest
@@ -172,7 +171,8 @@ sealed trait DeepTransactionExternalCallIntegrationTest
           Seq(alice),
           new E.EdgeCaseExternalCall(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.EdgeCaseExternalCall.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.EdgeCaseExternalCall.COMPANION)(createTx).loneElement.id
 
         clue("Exercise ManySequentialCalls with count=20") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
@@ -197,7 +197,8 @@ sealed trait DeepTransactionExternalCallIntegrationTest
           Seq(alice),
           new E.EdgeCaseExternalCall(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.EdgeCaseExternalCall.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.EdgeCaseExternalCall.COMPANION)(createTx).loneElement.id
 
         clue("Exercise ManySequentialCalls with count=50") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(

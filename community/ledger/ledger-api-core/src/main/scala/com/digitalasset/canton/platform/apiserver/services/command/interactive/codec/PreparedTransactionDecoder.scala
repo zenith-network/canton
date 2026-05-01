@@ -224,8 +224,7 @@ final class PreparedTransactionDecoder(override val loggerFactory: NamedLoggerFa
       .buildTransformer
 
     // Transformer for ByteString -> LfBytes (used by external call results)
-    private implicit val byteStringToLfBytesTransformer
-        : Transformer[ByteString, lf.data.Bytes] =
+    private implicit val byteStringToLfBytesTransformer: Transformer[ByteString, lf.data.Bytes] =
       (bs: ByteString) => lf.data.Bytes.fromByteString(bs)
 
     // Transformer for external call results

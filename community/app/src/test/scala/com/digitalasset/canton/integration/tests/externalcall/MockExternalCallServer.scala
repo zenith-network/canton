@@ -33,7 +33,8 @@ final case class ExternalCallResponse(
 
 object ExternalCallResponse {
   def ok(body: Array[Byte]): ExternalCallResponse = ExternalCallResponse(200, body)
-  def ok(body: String): ExternalCallResponse = ExternalCallResponse(200, body.getBytes(StandardCharsets.UTF_8))
+  def ok(body: String): ExternalCallResponse =
+    ExternalCallResponse(200, body.getBytes(StandardCharsets.UTF_8))
   def error(statusCode: Int, message: String): ExternalCallResponse =
     ExternalCallResponse(statusCode, message.getBytes(StandardCharsets.UTF_8))
 }
@@ -63,24 +64,21 @@ class MockExternalCallServer(
   }
 
   /** Set an echo handler that returns the input as output */
-  def setEchoHandler(functionId: String): Unit = {
+  def setEchoHandler(functionId: String): Unit =
     setHandler(functionId)(req => ExternalCallResponse.ok(req.input))
-  }
 
   /** Set an error handler that always returns the specified status code */
-  def setErrorHandler(functionId: String, statusCode: Int, message: String = "Error"): Unit = {
+  def setErrorHandler(functionId: String, statusCode: Int, message: String = "Error"): Unit =
     setHandler(functionId)(_ => ExternalCallResponse.error(statusCode, message))
-  }
 
   /** Set a handler that returns different results based on participant ID */
   def setParticipantSpecificHandler(functionId: String)(
       handler: (String, ExternalCallRequest) => ExternalCallResponse
-  ): Unit = {
+  ): Unit =
     setHandler(functionId) { req =>
       val participantId = req.participantId.getOrElse("unknown")
       handler(participantId, req)
     }
-  }
 
   /** Set a handler that fails N times before succeeding */
   def setRetryHandler(functionId: String, failuresBeforeSuccess: Int): Unit = {
@@ -104,12 +102,11 @@ class MockExternalCallServer(
   }
 
   /** Stop the mock server */
-  def stop(): Unit = {
+  def stop(): Unit =
     if (server != null) {
       server.stop(0)
       logger.info("Mock external call server stopped")
     }
-  }
 
   /** Reset all handlers and counters */
   def reset(): Unit = {
@@ -129,7 +126,7 @@ class MockExternalCallServer(
   def getTotalCallCount: Int = callCounts.values.sum
 
   private class MockHandler extends HttpHandler {
-    override def handle(exchange: HttpExchange): Unit = {
+    override def handle(exchange: HttpExchange): Unit =
       Try {
         // Canton sends all external calls to /api/v1/external-call with metadata in headers:
         //   X-Daml-External-Function-Id: the function identifier
@@ -146,55 +143,57 @@ class MockExternalCallServer(
           case None =>
             sendResponse(exchange, 400, "Missing X-Daml-External-Function-Id header")
           case Some(functionId) =>
-          val extensionId = "test-ext" // Extension ID is determined by config, not sent in request
+            val extensionId =
+              "test-ext" // Extension ID is determined by config, not sent in request
 
-          // Read request body
-          val inputStream = exchange.getRequestBody
-          val input = inputStream.readAllBytes()
-          inputStream.close()
+            // Read request body
+            val inputStream = exchange.getRequestBody
+            val input = inputStream.readAllBytes()
+            inputStream.close()
 
-          val mode = Option(headers.getFirst("X-Daml-External-Mode")).getOrElse("submission")
-          val participantId = Option(headers.getFirst("X-Participant-Id"))
-          val requestId = Option(headers.getFirst("X-Request-Id"))
+            val mode = Option(headers.getFirst("X-Daml-External-Mode")).getOrElse("submission")
+            val participantId = Option(headers.getFirst("X-Participant-Id"))
+            val requestId = Option(headers.getFirst("X-Request-Id"))
 
-          // Config hash from header
-          val config = configHashOpt.map(_.getBytes(StandardCharsets.UTF_8)).getOrElse(Array.emptyByteArray)
+            // Config hash from header
+            val config =
+              configHashOpt.map(_.getBytes(StandardCharsets.UTF_8)).getOrElse(Array.emptyByteArray)
 
-          val request = ExternalCallRequest(
-            extensionId = extensionId,
-            functionId = functionId,
-            config = config,
-            input = input,
-            mode = mode,
-            participantId = participantId,
-            requestId = requestId,
-          )
+            val request = ExternalCallRequest(
+              extensionId = extensionId,
+              functionId = functionId,
+              config = config,
+              input = input,
+              mode = mode,
+              participantId = participantId,
+              requestId = requestId,
+            )
 
-          // Track the call
-          callCounts.updateWith(functionId) {
-            case Some(count) => Some(count + 1)
-            case None => Some(1)
-          }
-          lastRequests.put(functionId, request)
+            // Track the call
+            callCounts.updateWith(functionId) {
+              case Some(count) => Some(count + 1)
+              case None => Some(1)
+            }
+            lastRequests.put(functionId, request)
 
-          logger.debug(
-            s"Received request: extensionId=$extensionId, functionId=$functionId, " +
-              s"mode=$mode, participantId=$participantId, inputSize=${input.length}"
-          )
+            logger.debug(
+              s"Received request: extensionId=$extensionId, functionId=$functionId, " +
+                s"mode=$mode, participantId=$participantId, inputSize=${input.length}"
+            )
 
-          // Find and invoke handler
-          handlers.get(functionId) match {
-            case Some(handler) =>
-              val response = handler(request)
-              response.headers.foreach { case (k, v) =>
-                exchange.getResponseHeaders.add(k, v)
-              }
-              sendResponse(exchange, response.statusCode, response.body)
+            // Find and invoke handler
+            handlers.get(functionId) match {
+              case Some(handler) =>
+                val response = handler(request)
+                response.headers.foreach { case (k, v) =>
+                  exchange.getResponseHeaders.add(k, v)
+                }
+                sendResponse(exchange, response.statusCode, response.body)
 
-            case None =>
-              logger.warn(s"No handler for function: $functionId")
-              sendResponse(exchange, 404, s"Unknown function: $functionId")
-          }
+              case None =>
+                logger.warn(s"No handler for function: $functionId")
+                sendResponse(exchange, 404, s"Unknown function: $functionId")
+            }
         }
       } match {
         case Success(_) => // Response already sent
@@ -202,11 +201,9 @@ class MockExternalCallServer(
           logger.error(s"Error handling request: ${ex.getMessage}", ex)
           Try(sendResponse(exchange, 500, s"Internal error: ${ex.getMessage}"))
       }
-    }
 
-    private def sendResponse(exchange: HttpExchange, statusCode: Int, body: String): Unit = {
+    private def sendResponse(exchange: HttpExchange, statusCode: Int, body: String): Unit =
       sendResponse(exchange, statusCode, body.getBytes(StandardCharsets.UTF_8))
-    }
 
     private def sendResponse(exchange: HttpExchange, statusCode: Int, body: Array[Byte]): Unit = {
       exchange.sendResponseHeaders(statusCode, body.length.toLong)
@@ -218,6 +215,7 @@ class MockExternalCallServer(
 }
 
 object MockExternalCallServer {
+
   /** Find a free port for the mock server */
   def findFreePort(): Int = {
     val socket = new java.net.ServerSocket(0)

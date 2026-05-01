@@ -17,14 +17,14 @@ import scala.jdk.CollectionConverters.*
 
 /** Integration tests for rollback handling with external calls.
   *
-  * Tests how external calls interact with Daml's try-catch and exception handling,
-  * including rollback scopes.
+  * Tests how external calls interact with Daml's try-catch and exception handling, including
+  * rollback scopes.
   *
   * Tests:
-  * - External call before a rolled-back scope
-  * - External call inside a rolled-back scope
-  * - Nested rollback scopes with external calls
-  * - External call after catching an exception
+  *   - External call before a rolled-back scope
+  *   - External call inside a rolled-back scope
+  *   - Nested rollback scopes with external calls
+  *   - External call after catching an exception
   */
 sealed trait RollbackExternalCallIntegrationTest
     extends CommunityIntegrationTest
@@ -78,7 +78,8 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.RollbackTestContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise ExternalCallThenRollback — external call before try/catch") {
           // The choice makes an external call, then has a try block with division by zero
@@ -103,7 +104,8 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.RollbackTestContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise ExternalCallInRollback with shouldFail=true") {
           // External call is made inside try block, then exception is thrown and caught
@@ -128,7 +130,8 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.RollbackTestContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise ExternalCallInRollback with shouldFail=false") {
           // External call is made inside try block, no exception is thrown
@@ -153,7 +156,10 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.MultipleRollbackContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx).loneElement.id
+        val contractId = JavaDecodeUtil
+          .decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx)
+          .loneElement
+          .id
 
         clue("Exercise MultipleRollbackScopes") {
           // Scope 1: external call with input+"2d31" → succeeds
@@ -180,7 +186,10 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.MultipleRollbackContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx).loneElement.id
+        val contractId = JavaDecodeUtil
+          .decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx)
+          .loneElement
+          .id
 
         clue("Exercise NestedRollbackScopes") {
           // Outer external call, then nested try blocks with external calls
@@ -205,7 +214,8 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.RollbackTestContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise ExternalCallInRollback with shouldFail=true") {
           // External call happens first, then exception is thrown in same scope
@@ -233,7 +243,8 @@ sealed trait RollbackExternalCallIntegrationTest
         Seq(alice),
         new E.RollbackTestContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
 
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
@@ -253,7 +264,10 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.MultipleRollbackContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx).loneElement.id
+        val contractId = JavaDecodeUtil
+          .decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx)
+          .loneElement
+          .id
 
         clue("Exercise MultipleRollbackScopes to verify partial rollback semantics") {
           // Same as the "handle multiple rollback scopes" test but focusing on partial rollback
@@ -278,7 +292,10 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.MultipleRollbackContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx).loneElement.id
+        val contractId = JavaDecodeUtil
+          .decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx)
+          .loneElement
+          .id
 
         clue("Exercise NestedRollbackScopes to test deep nesting") {
           // Tests deep nesting of exercises with rollbacks to ensure scope is maintained
@@ -302,7 +319,10 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.MultipleRollbackContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx).loneElement.id
+        val contractId = JavaDecodeUtil
+          .decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx)
+          .loneElement
+          .id
 
         clue("Exercise MultipleRollbackScopes for multi-rollback transaction") {
           // Multiple rollback scopes in one transaction - some succeed, some fail
@@ -326,7 +346,10 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.MultipleRollbackContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx).loneElement.id
+        val contractId = JavaDecodeUtil
+          .decodeAllCreated(E.MultipleRollbackContract.COMPANION)(createTx)
+          .loneElement
+          .id
 
         clue("Exercise MultipleRollbackScopes to verify ordering after rollbacks") {
           // Verify that external call results maintain proper ordering after rollbacks
@@ -351,7 +374,8 @@ sealed trait RollbackExternalCallIntegrationTest
           Seq(alice),
           new E.RollbackTestContract(alice.toProtoPrimitive).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.RollbackTestContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise with invalid function to trigger external call error") {
           // This test expects the external call to return an error status

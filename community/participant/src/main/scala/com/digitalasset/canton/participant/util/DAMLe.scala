@@ -25,7 +25,7 @@ import com.digitalasset.canton.util.Thereafter.syntax.*
 import com.digitalasset.canton.{LfCommand, LfGlobalKeyMapping, LfPackageId, LfPartyId}
 import com.digitalasset.daml.lf.VersionRange
 import com.digitalasset.daml.lf.data.Ref.{PackageId, PackageName}
-import com.digitalasset.daml.lf.data.{Bytes => LfBytes, ImmArray, Ref}
+import com.digitalasset.daml.lf.data.{Bytes as LfBytes, ImmArray, Ref}
 import com.digitalasset.daml.lf.engine.ResultNeedContract.Response
 import com.digitalasset.daml.lf.engine.{Enricher as _, *}
 import com.digitalasset.daml.lf.language.LanguageVersion.v2_dev
@@ -118,9 +118,9 @@ object DAMLe {
     override protected def pretty: Pretty[EnrichmentError] = adHocPrettyInstance
   }
 
-  /** Stored external call results for replay during validation.
-    * Key is (extensionId, functionId, index), value is (config, input, output) as data.Bytes.
-    * The index is derived from the position in the externalCallResults list.
+  /** Stored external call results for replay during validation. Key is (extensionId, functionId,
+    * index), value is (config, input, output) as data.Bytes. The index is derived from the position
+    * in the externalCallResults list.
     */
   type StoredExternalCallResults = Map[(String, String, Int), (LfBytes, LfBytes, LfBytes)]
 
@@ -337,8 +337,8 @@ class DAMLe(
       contractAuthenticator: ContractAuthenticatorFn,
       result: Result[A],
       getEngineAbortStatus: GetEngineAbortStatus,
-      storedExternalCallResults: StoredExternalCallResults = StoredExternalCallResults.empty,
-      isConfirmer: Boolean = false,
+      storedExternalCallResults: StoredExternalCallResults,
+      isConfirmer: Boolean,
   )(implicit
       traceContext: TraceContext
   ): FutureUnlessShutdown[Either[ReinterpretationError, A]] = {
@@ -431,7 +431,14 @@ class DAMLe(
                 s"Confirmer re-executing external call for extension=$extensionId, function=$functionId, callIndex=$currentCallIndex"
               )
               handler
-                .handleExternalCall(extensionId, functionId, configHash, input, "validation", "validation")
+                .handleExternalCall(
+                  extensionId,
+                  functionId,
+                  configHash,
+                  input,
+                  "validation",
+                  "validation",
+                )
                 .flatMap {
                   case Right(output) =>
                     val storedOutput = storedExternalCallResults

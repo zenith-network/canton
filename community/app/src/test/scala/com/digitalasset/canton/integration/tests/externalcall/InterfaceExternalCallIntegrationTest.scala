@@ -17,15 +17,14 @@ import scala.jdk.CollectionConverters.*
 
 /** Integration tests for external calls via interface exercises.
   *
-  * These tests address the reviewer requirement:
-  * "A test involving exercises by interface"
+  * These tests address the reviewer requirement: "A test involving exercises by interface"
   *
-  * The ExternalCallInterface is defined in ExternalCallTest.daml with a DoExternalCall
-  * choice. ExternalCallContract implements this interface.
+  * The ExternalCallInterface is defined in ExternalCallTest.daml with a DoExternalCall choice.
+  * ExternalCallContract implements this interface.
   *
-  * NOTE: These tests require the codegen for ExternalCallInterface to be available.
-  * If the interface codegen classes are not yet generated, these tests will remain
-  * pending until the DAR is rebuilt with the interface definitions.
+  * NOTE: These tests require the codegen for ExternalCallInterface to be available. If the
+  * interface codegen classes are not yet generated, these tests will remain pending until the DAR
+  * is rebuilt with the interface definitions.
   */
 sealed trait InterfaceExternalCallIntegrationTest
     extends CommunityIntegrationTest
@@ -65,8 +64,6 @@ sealed trait InterfaceExternalCallIntegrationTest
         }
       }
 
-
-
   "interface exercises with external calls" should {
 
     "execute external call via interface choice" in { implicit env =>
@@ -84,18 +81,23 @@ sealed trait InterfaceExternalCallIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise the interface's DoExternalCall choice
       val interfaceId = contractId.toInterface(E.ExternalCallInterface.INTERFACE)
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        interfaceId.exerciseDoExternalCall(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        interfaceId
+          .exerciseDoExternalCall(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       // Transaction should succeed
@@ -117,18 +119,25 @@ sealed trait InterfaceExternalCallIntegrationTest
           "test-label",
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.AlternativeExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId = JavaDecodeUtil
+        .decodeAllCreated(E.AlternativeExternalCallContract.COMPANION)(createTx)
+        .loneElement
+        .id
 
       // Convert to interface and exercise DoExternalCall
       val interfaceId = contractId.toInterface(E.ExternalCallInterface.INTERFACE)
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        interfaceId.exerciseDoExternalCall(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        interfaceId
+          .exerciseDoExternalCall(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       exerciseTx.getUpdateId should not be empty
@@ -154,19 +163,24 @@ sealed trait InterfaceExternalCallIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // For now, test a direct interface exercise (actual nesting would require
       // a template with a choice that exercises the interface, which might not exist)
       val interfaceId = contractId.toInterface(E.ExternalCallInterface.INTERFACE)
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        interfaceId.exerciseDoExternalCall(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        interfaceId
+          .exerciseDoExternalCall(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       exerciseTx.getUpdateId should not be empty
@@ -187,18 +201,23 @@ sealed trait InterfaceExternalCallIntegrationTest
           java.util.List.of(bob.toProtoPrimitive),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise via interface
       val interfaceId = contractId.toInterface(E.ExternalCallInterface.INTERFACE)
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        interfaceId.exerciseDoExternalCall(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        interfaceId
+          .exerciseDoExternalCall(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       exerciseTx.getUpdateId should not be empty
@@ -227,18 +246,23 @@ sealed trait InterfaceExternalCallIntegrationTest
           java.util.List.of(bob.toProtoPrimitive),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise via interface
       val interfaceId = contractId.toInterface(E.ExternalCallInterface.INTERFACE)
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        interfaceId.exerciseDoExternalCall(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        interfaceId
+          .exerciseDoExternalCall(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       exerciseTx.getUpdateId should not be empty
@@ -261,20 +285,25 @@ sealed trait InterfaceExternalCallIntegrationTest
           java.util.List.of(),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       val interfaceId = contractId.toInterface(E.ExternalCallInterface.INTERFACE)
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        interfaceId.exerciseDoExternalCall(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        interfaceId
+          .exerciseDoExternalCall(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
-      // Verify that the external call correctly identifies it's coming from 
+      // Verify that the external call correctly identifies it's coming from
       // ExternalCallContract even when exercised via interface
       exerciseTx.getUpdateId should not be empty
     }
@@ -294,19 +323,24 @@ sealed trait InterfaceExternalCallIntegrationTest
           java.util.List.of(bob.toProtoPrimitive),
         ).create.commands.asScala.toSeq,
       )
-      val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+      val contractId =
+        JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
       // Exercise via interface — Canton must decompose the interface exercise into views
       // and include the external call result in the correct view's ActionDescription
       val interfaceId = contractId.toInterface(E.ExternalCallInterface.INTERFACE)
       val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
         Seq(alice),
-        interfaceId.exerciseDoExternalCall(
-          "test-ext",
-          "echo",
-          "00000000",
-          inputHex,
-        ).commands.asScala.toSeq,
+        interfaceId
+          .exerciseDoExternalCall(
+            "test-ext",
+            "echo",
+            "00000000",
+            inputHex,
+          )
+          .commands
+          .asScala
+          .toSeq,
       )
 
       // Transaction succeeds means view decomposition handled the interface exercise correctly,

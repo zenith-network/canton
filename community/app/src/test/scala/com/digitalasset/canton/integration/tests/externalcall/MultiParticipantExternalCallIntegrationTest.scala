@@ -17,16 +17,15 @@ import scala.jdk.CollectionConverters.*
 
 /** Integration tests for external calls across multiple participants.
   *
-  * These tests address the reviewer requirement:
-  * "A test involving transactions with parties on different nodes, including
-  *  observer nodes only seeing small subsets of the transaction"
+  * These tests address the reviewer requirement: "A test involving transactions with parties on
+  * different nodes, including observer nodes only seeing small subsets of the transaction"
   *
   * Tests:
-  * - Both participants have extension configured
-  * - Observer on different participant replays without HTTP
-  * - Observer sees only subset of transaction
-  * - Three participants with varied visibility
-  * - Signatory on P1, observers on P2 and P3
+  *   - Both participants have extension configured
+  *   - Observer on different participant replays without HTTP
+  *   - Observer sees only subset of transaction
+  *   - Three participants with varied visibility
+  *   - Signatory on P1, observers on P2 and P3
   */
 sealed trait MultiParticipantExternalCallIntegrationTest
     extends CommunityIntegrationTest
@@ -100,17 +99,22 @@ sealed trait MultiParticipantExternalCallIntegrationTest
             java.util.List.of(bob.toProtoPrimitive), // Bob as observer
           ).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise external call from alice") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            contractId.exerciseCallExternal(
-              "test-ext",
-              "track-caller",
-              "00000000",
-              inputHex,
-            ).commands.asScala.toSeq,
+            contractId
+              .exerciseCallExternal(
+                "test-ext",
+                "track-caller",
+                "00000000",
+                inputHex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
 
           exerciseTx.getUpdateId should not be empty
@@ -142,17 +146,22 @@ sealed trait MultiParticipantExternalCallIntegrationTest
             java.util.List.of(bob.toProtoPrimitive),
           ).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise external call") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            contractId.exerciseCallExternal(
-              "test-ext",
-              "echo",
-              "00000000",
-              inputHex,
-            ).commands.asScala.toSeq,
+            contractId
+              .exerciseCallExternal(
+                "test-ext",
+                "echo",
+                "00000000",
+                inputHex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
 
           exerciseTx.getUpdateId should not be empty
@@ -196,17 +205,22 @@ sealed trait MultiParticipantExternalCallIntegrationTest
             java.util.List.of(), // No observers
           ).create.commands.asScala.toSeq,
         )
-        val aliceOnlyContractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val aliceOnlyContractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise external call on alice-only contract") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            aliceOnlyContractId.exerciseCallExternal(
-              "test-ext",
-              "echo",
-              "00000000",
-              inputHex,
-            ).commands.asScala.toSeq,
+            aliceOnlyContractId
+              .exerciseCallExternal(
+                "test-ext",
+                "echo",
+                "00000000",
+                inputHex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
           exerciseTx.getUpdateId should not be empty
         }
@@ -220,17 +234,22 @@ sealed trait MultiParticipantExternalCallIntegrationTest
             java.util.List.of(bob.toProtoPrimitive),
           ).create.commands.asScala.toSeq,
         )
-        val sharedContractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val sharedContractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise external call on shared contract") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            sharedContractId.exerciseCallExternal(
-              "test-ext",
-              "echo",
-              "00000000",
-              inputHex,
-            ).commands.asScala.toSeq,
+            sharedContractId
+              .exerciseCallExternal(
+                "test-ext",
+                "echo",
+                "00000000",
+                inputHex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
           exerciseTx.getUpdateId should not be empty
         }
@@ -269,17 +288,22 @@ sealed trait MultiParticipantExternalCallIntegrationTest
             java.util.List.of(bob.toProtoPrimitive), // Bob as observer
           ).create.commands.asScala.toSeq,
         )
-        val bobContractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val bobContractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise external call on bob's contract") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            bobContractId.exerciseCallExternal(
-              "test-ext",
-              "echo",
-              "00000000",
-              inputHex,
-            ).commands.asScala.toSeq,
+            bobContractId
+              .exerciseCallExternal(
+                "test-ext",
+                "echo",
+                "00000000",
+                inputHex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
           exerciseTx.getUpdateId should not be empty
         }
@@ -301,17 +325,22 @@ sealed trait MultiParticipantExternalCallIntegrationTest
             java.util.List.of(charlie.toProtoPrimitive), // Charlie as observer
           ).create.commands.asScala.toSeq,
         )
-        val charlieContractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val charlieContractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise external call on charlie's contract") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            charlieContractId.exerciseCallExternal(
-              "test-ext",
-              "echo",
-              "00000000",
-              inputHex,
-            ).commands.asScala.toSeq,
+            charlieContractId
+              .exerciseCallExternal(
+                "test-ext",
+                "echo",
+                "00000000",
+                inputHex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
           exerciseTx.getUpdateId should not be empty
         }
@@ -338,20 +367,28 @@ sealed trait MultiParticipantExternalCallIntegrationTest
           Seq(alice),
           new E.ExternalCallContract(
             alice.toProtoPrimitive,
-            java.util.List.of(bob.toProtoPrimitive, charlie.toProtoPrimitive), // Both bob and charlie as observers
+            java.util.List.of(
+              bob.toProtoPrimitive,
+              charlie.toProtoPrimitive,
+            ), // Both bob and charlie as observers
           ).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise external call from alice (P1 signatory)") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            contractId.exerciseCallExternal(
-              "test-ext",
-              "echo",
-              "00000000",
-              inputHex,
-            ).commands.asScala.toSeq,
+            contractId
+              .exerciseCallExternal(
+                "test-ext",
+                "echo",
+                "00000000",
+                inputHex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
 
           exerciseTx.getUpdateId should not be empty
@@ -402,7 +439,8 @@ sealed trait MultiParticipantExternalCallIntegrationTest
             java.util.List.of(bob.toProtoPrimitive),
           ).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         // Reset counter after contract creation
         httpCallCount.set(0)
@@ -410,12 +448,16 @@ sealed trait MultiParticipantExternalCallIntegrationTest
         clue("Exercise external call from alice") {
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            contractId.exerciseCallExternal(
-              "test-ext",
-              "observer-replay",
-              "00000000",
-              inputHex,
-            ).commands.asScala.toSeq,
+            contractId
+              .exerciseCallExternal(
+                "test-ext",
+                "observer-replay",
+                "00000000",
+                inputHex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
 
           exerciseTx.getUpdateId should not be empty
@@ -462,19 +504,24 @@ sealed trait MultiParticipantExternalCallIntegrationTest
             java.util.List.of(),
           ).create.commands.asScala.toSeq,
         )
-        val contractId = JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
+        val contractId =
+          JavaDecodeUtil.decodeAllCreated(E.ExternalCallContract.COMPANION)(createTx).loneElement.id
 
         clue("Exercise external call - both hosting participants validate") {
           // With echo handler, both participant1 and participant2 (which now host alice)
           // should validate and get the same result
           val exerciseTx = participant1.ledger_api.javaapi.commands.submit(
             Seq(alice),
-            contractId.exerciseCallExternal(
-              "test-ext",
-              "echo",
-              "00000000",
-              inputHex,
-            ).commands.asScala.toSeq,
+            contractId
+              .exerciseCallExternal(
+                "test-ext",
+                "echo",
+                "00000000",
+                inputHex,
+              )
+              .commands
+              .asScala
+              .toSeq,
           )
 
           exerciseTx.getUpdateId should not be empty
