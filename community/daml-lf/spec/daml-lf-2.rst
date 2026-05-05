@@ -4685,15 +4685,17 @@ Error functions
 External call functions
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-* ``EXTERNAL_CALL : 'Text' → 'Text' → 'Text' → 'Text' → 'Update' 'Text'``
+* ``EXTERNAL_CALL : ∀ input output. 'Text' → 'Text' → 'Text' → input → 'Update' output``
 
   Requests an external call. The first argument is the extension identifier, the
   second argument is the function identifier, the third argument is the
-  hexadecimal-encoded configuration hash, and the fourth argument is the
-  hexadecimal-encoded input payload. The result is the hexadecimal-encoded
-  output payload. Evaluation fails with an error if the configuration hash or
-  input payload is not valid hexadecimal, or if the external call cannot be
-  completed successfully.
+  hexadecimal-encoded configuration hash, and the fourth argument is the input
+  value. The runtime encodes the input value as a hexadecimal-encoded LF value
+  payload and decodes the external call result from a hexadecimal-encoded LF
+  value payload. Evaluation fails with an error if the configuration hash or
+  output payload is not valid hexadecimal, if the output payload cannot be
+  decoded or does not match the expected output type, or if the external call
+  cannot be completed successfully.
 
   [*Available in version >= 2.dev*]
 

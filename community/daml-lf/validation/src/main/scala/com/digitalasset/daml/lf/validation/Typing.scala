@@ -305,7 +305,13 @@ private[validation] object Typing {
         TText ->: TFailureCategory ->: TText ->: TTextMap(TText) ->: alpha,
       ),
       // External Call
-      BExternalCall -> (TText ->: TText ->: TText ->: TText ->: TUpdate(TText)),
+      BExternalCall -> TForall(
+        alpha.name -> KStar,
+        TForall(
+          beta.name -> KStar,
+          TText ->: TText ->: TText ->: alpha ->: TUpdate(beta),
+        ),
+      ),
     )
   }
 
