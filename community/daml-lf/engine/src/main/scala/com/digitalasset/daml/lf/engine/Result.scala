@@ -224,7 +224,7 @@ final case class ResultPrefetch[A](
   * @param extensionId Identifier of the configured extension
   * @param functionId Function identifier within the extension
   * @param configHash Configuration hash (hex) for version validation
-  * @param input Input data (hex)
+  * @param input Hex-encoded LF value payload
   * @param resume Callback to provide the result or error
   */
 final case class ResultNeedExternalCall[A](

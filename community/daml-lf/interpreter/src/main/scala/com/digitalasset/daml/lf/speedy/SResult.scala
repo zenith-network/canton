@@ -56,7 +56,7 @@ object Question {
       * @param extensionId Identifier of the configured extension (from Canton config)
       * @param functionId Function identifier within the extension
       * @param configHash Configuration hash (hex) for version validation
-      * @param input Input data (hex)
+      * @param input Hex-encoded LF value payload
       * @param callback Callback to provide the result or error
       */
     final case class NeedExternalCall(

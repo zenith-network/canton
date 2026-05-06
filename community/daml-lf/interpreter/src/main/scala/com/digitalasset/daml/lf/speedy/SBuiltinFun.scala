@@ -29,7 +29,7 @@ import com.digitalasset.daml.lf.transaction.{
   SerializationVersion,
   TransactionError,
 }
-import com.digitalasset.daml.lf.value.{Value => V}
+import com.digitalasset.daml.lf.value.{Value => V, ValueCoder}
 
 import java.nio.charset.StandardCharsets
 import java.security.{
@@ -909,7 +909,7 @@ private[lf] object SBuiltinFun {
     }
   }
 
-  final case object SBExternalCall extends UpdateBuiltin(5) {
+  final case class SBExternalCall(inputType: Ast.Type, outputType: Ast.Type) extends UpdateBuiltin(5) {
     override protected def executeUpdate(
         args: ArraySeq[SValue],
         machine: UpdateMachine,
@@ -917,68 +917,105 @@ private[lf] object SBuiltinFun {
       val extensionId = getSText(args, 0)
       val functionId = getSText(args, 1)
       val configRaw = getSText(args, 2)
-      val inputRaw = getSText(args, 3)
+      val inputValue = args(3).toNormalizedValue
       checkToken(args, 4)
       val configHex = configRaw.trim.toLowerCase(java.util.Locale.ROOT)
-      val inputHex = inputRaw.trim.toLowerCase(java.util.Locale.ROOT)
 
       machine.updateGasBudget(_.BExternalCall.cost(functionId))
 
-      // Validate hex encoding before making the external call
-      (Ref.HexString.fromString(configHex), Ref.HexString.fromString(inputHex)) match {
-        case (Right(_), Right(_)) =>
-          if (!machine.ptx.canRecordExternalCallResult) {
-            Control.Error(IE.UserError(
-              s"External calls are only supported within exercise context. " +
-                s"extensionId=$extensionId, functionId=$functionId"
-            ))
-          } else
-          // Use question/answer pattern - participant handles the actual HTTP call
-          machine.needExternalCall(
-            extensionId = extensionId,
-            functionId = functionId,
-            configHash = configHex,
-            input = inputHex,
-          ) {
-            case Right(responseBodyRaw) =>
-              val outputHex = responseBodyRaw.trim.toLowerCase(java.util.Locale.ROOT)
-              Ref.HexString.fromString(outputHex) match {
-                case Right(_) =>
-                  // The external-call question is only issued after confirming that the
-                  // current partial transaction can record a result, so resuming here must
-                  // still be inside an enclosing exercise context.
-                  val updatedPtx = machine.ptx.recordExternalCallResult(
-                    extensionId = extensionId,
-                    functionId = functionId,
-                    configHash = configHex,
-                    inputHex = inputHex,
-                    outputHex = outputHex,
-                  ).getOrElse(
-                    InternalError.runtimeException(
-                      NameOf.qualifiedNameOfCurrentFunc,
-                      s"lost enclosing exercise context while resuming external call " +
-                        s"(extensionId=$extensionId, functionId=$functionId)",
-                    )
-                  )
-                  machine.ptx = updatedPtx
-                  Control.Value(SText(outputHex))
-                case Left(_) =>
-                  Control.Error(
-                    IE.UserError("External call failed: Invalid hex encoding in external call output")
-                  )
-              }
-            case Left(error) =>
-              // Propagate error with full context for proper error handling
-              val errorMsg = s"External call failed: ${error.message}" +
-                s" (status=${error.statusCode}" +
-                error.requestId.map(id => s", requestId=$id").getOrElse("") +
-                s", extensionId=$extensionId, functionId=$functionId)"
-              Control.Error(IE.UserError(errorMsg))
-          }
-        case _ =>
+      ValueCoder.encodeValue(SerializationVersion.VDev, inputValue) match {
+        case Left(ValueCoder.EncodeError(message)) =>
           Control.Error(
-            IE.UserError(s"External call failed: Invalid hex encoding in config or input")
+            IE.UserError(
+              s"External call failed: could not encode input value as LF value bytes: $message"
+            )
           )
+        case Right(inputBytes) =>
+          val inputHex = Bytes.fromByteString(inputBytes).toHexString
+
+          Ref.HexString.fromString(configHex) match {
+            case Right(_) =>
+              if (!machine.ptx.canRecordExternalCallResult) {
+                Control.Error(IE.UserError(
+                  s"External calls are only supported within exercise context. " +
+                    s"extensionId=$extensionId, functionId=$functionId"
+                ))
+              } else
+              // Use question/answer pattern - participant handles the actual HTTP call
+              machine.needExternalCall(
+                extensionId = extensionId,
+                functionId = functionId,
+                configHash = configHex,
+                input = inputHex,
+              ) {
+                case Right(responseBodyRaw) =>
+                  val outputHex = responseBodyRaw.trim.toLowerCase(java.util.Locale.ROOT)
+                  Ref.HexString.fromString(outputHex) match {
+                    case Right(outputHexString) =>
+                      ValueCoder.decodeValue(
+                        SerializationVersion.VDev,
+                        Bytes.fromHexString(outputHexString).toByteString,
+                      ) match {
+                        case Left(ValueCoder.DecodeError(message)) =>
+                          Control.Error(
+                            IE.UserError(
+                              s"External call failed: could not decode external call output as LF value bytes: $message"
+                            )
+                          )
+                        case Right(outputValue) =>
+                          new ValueTranslator(
+                            machine.compiledPackages.pkgInterface,
+                            forbidLocalContractIds = true,
+                            forbidTrailingNones = true,
+                          ).translateValue(outputType, outputValue).fold(
+                            translationError =>
+                              Control.Error(
+                                IE.UserError(
+                                  s"External call failed: external call output does not match expected type ${outputType.pretty}: $translationError"
+                                )
+                              ),
+                            { outputSValue =>
+                              // The external-call question is only issued after confirming that the
+                              // current partial transaction can record a result, so resuming here must
+                              // still be inside an enclosing exercise context.
+                              val updatedPtx = machine.ptx.recordExternalCallResult(
+                                extensionId = extensionId,
+                                functionId = functionId,
+                                configHash = configHex,
+                                inputHex = inputHex,
+                                outputHex = outputHex,
+                              ).getOrElse(
+                                InternalError.runtimeException(
+                                  NameOf.qualifiedNameOfCurrentFunc,
+                                  s"lost enclosing exercise context while resuming external call " +
+                                    s"(extensionId=$extensionId, functionId=$functionId)",
+                                )
+                              )
+                              machine.ptx = updatedPtx
+                              Control.Value(outputSValue)
+                            },
+                          )
+                      }
+                    case Left(_) =>
+                      Control.Error(
+                        IE.UserError(
+                          "External call failed: Invalid hex encoding in external call output"
+                        )
+                      )
+                  }
+                case Left(error) =>
+                  // Propagate error with full context for proper error handling
+                  val errorMsg = s"External call failed: ${error.message}" +
+                    s" (status=${error.statusCode}" +
+                    error.requestId.map(id => s", requestId=$id").getOrElse("") +
+                    s", extensionId=$extensionId, functionId=$functionId)"
+                  Control.Error(IE.UserError(errorMsg))
+              }
+            case Left(_) =>
+              Control.Error(
+                IE.UserError(s"External call failed: Invalid hex encoding in config")
+              )
+          }
       }
     }
   }

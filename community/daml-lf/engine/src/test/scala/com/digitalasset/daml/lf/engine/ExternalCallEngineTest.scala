@@ -12,8 +12,8 @@ import com.digitalasset.daml.lf.engine.ResultNeedExternalCall
 import com.digitalasset.daml.lf.language.LanguageVersion
 import com.digitalasset.daml.lf.testing.parser.Implicits.SyntaxHelper
 import com.digitalasset.daml.lf.testing.parser.ParserParameters
-import com.digitalasset.daml.lf.transaction.{ExternalCallResult, Node}
-import com.digitalasset.daml.lf.value.{ContractIdVersion, Value}
+import com.digitalasset.daml.lf.transaction.{ExternalCallResult, Node, SerializationVersion}
+import com.digitalasset.daml.lf.value.{ContractIdVersion, Value, ValueCoder}
 import org.scalatest.Inside
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -44,7 +44,7 @@ class ExternalCallEngineTest
 
         choice Call (self) (arg: Unit) : Text,
           controllers Cons @Party [M:T {party} this] (Nil @Party)
-          to EXTERNAL_CALL "ext" "fun" "0a0b" "c0ff";
+          to EXTERNAL_CALL @Text @Text "ext" "fun" "0a0b" "hello";
       };
     }
   """
@@ -78,6 +78,17 @@ class ExternalCallEngineTest
     Ref.ChoiceName.assertFromString("Call"),
     Value.ValueUnit,
   )
+  private def encodeValueHex(value: Value): String =
+    data.Bytes
+      .fromByteString(
+        ValueCoder
+          .encodeValue(SerializationVersion.VDev, value)
+          .fold(err => fail(s"failed to encode test value: $err"), identity)
+      )
+      .toHexString
+
+  private val encodedHello = encodeValueHex(Value.ValueText("hello"))
+  private val encodedWorld = encodeValueHex(Value.ValueText("world"))
 
   "Engine.submit" should {
     "emit ResultNeedExternalCall with the expected payload and continuation" in {
@@ -88,9 +99,9 @@ class ExternalCallEngineTest
           extensionId shouldBe "ext"
           functionId shouldBe "fun"
           configHash shouldBe "0a0b"
-          input shouldBe "c0ff"
+          input shouldBe encodedHello
 
-          inside(resume(Right("beef")).consume()) { case Right((tx, _)) =>
+          inside(resume(Right(encodedWorld)).consume()) { case Right((tx, _)) =>
             val exerciseNodes = tx.nodes.collect { case (_, exercise: Node.Exercise) => exercise }
             exerciseNodes should have size 1
             exerciseNodes.head.externalCallResults shouldBe ImmArray(
@@ -98,8 +109,8 @@ class ExternalCallEngineTest
                 extensionId = "ext",
                 functionId = "fun",
                 config = data.Bytes.assertFromString("0a0b"),
-                input = data.Bytes.assertFromString("c0ff"),
-                output = data.Bytes.assertFromString("beef"),
+                input = data.Bytes.assertFromString(encodedHello),
+                output = data.Bytes.assertFromString(encodedWorld),
               )
             )
           }
@@ -152,7 +163,9 @@ class ExternalCallEngineTest
         )
       )
 
-      inside(enoughGas) { case ResultNeedExternalCall("ext", "fun", "0a0b", "c0ff", _) => succeed }
+      inside(enoughGas) { case ResultNeedExternalCall("ext", "fun", "0a0b", `encodedHello`, _) =>
+        succeed
+      }
     }
   }
 }

@@ -216,6 +216,8 @@ private[lf] final class PhaseOne(
         processExp(env, body)
       case EAbs(_, _) =>
         compileAbss(env, exp, arity = 0)
+      case ETyApp(ETyApp(EBuiltinFun(BExternalCall), inputType), outputType) =>
+        Return(SEBuiltin(SBExternalCall(inputType, outputType)))
       case ETyApp(body, _) =>
         processExp(env, body)
       case EApp(_, _) =>
@@ -444,9 +446,6 @@ private[lf] final class PhaseOne(
           case BSECP256K1Bool => SBSECP256K1Bool
           case BSECP256K1WithEcdsaBool => SBSECP256K1WithEcdsaBool
           case BSECP256K1ValidateKey => SBSECP256K1ValidateKey
-
-          // External call
-          case BExternalCall => SBExternalCall
 
           // TextMap
 
@@ -781,7 +780,7 @@ private[lf] final class PhaseOne(
         compileExp(env, arg) { arg =>
           compileApps(
             env,
-            stripLocsAndTypes(fun),
+            stripLocs(fun),
             arg :: args,
           ) // recursive call in compileExp is stack-safe
         }
@@ -855,6 +854,13 @@ private[lf] final class PhaseOne(
           }
         }
       }
+    }
+
+  @tailrec
+  private[this] def stripLocs(exp: Expr): Expr =
+    exp match {
+      case ELocation(_, exp) => stripLocs(exp)
+      case _ => exp
     }
 
   @tailrec
