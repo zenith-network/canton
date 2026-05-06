@@ -41,6 +41,13 @@ The important points are:
 
 This gives Daml users the ergonomic feature they want while keeping the runtime model explicit, deterministic, and reviewable by upstream Daml/Canton maintainers.
 
+This proposal requires coordinated changes in both upstream repositories:
+
+- the Daml repository, which owns the source-level API, standard library wrapper, compiler lowering, LF typechecking, and package validation;
+- the Canton repository, which owns interpretation, participant integration, external-service calls, transaction evidence, replay, and validation.
+
+The Canton-side changes are conceptually straightforward: once the runtime receives concrete input and output types, Canton can encode the evaluated input value, call the configured extension service, decode the returned bytes, validate the result against the expected output type, and record the byte-level evidence. The Daml-side changes are likely to be more delicate. They affect the public `DA.External` API, polymorphic builtin lowering, `Serializable` constraints, and the boundary between ordinary stdlib functions and compiler-recognized intrinsics. Those are language/compiler design questions, not just runtime plumbing.
+
 ## Short Glossary
 
 This report uses a few Daml/Canton terms:
@@ -132,6 +139,16 @@ The initial design should not:
 - hide external-call disclosure from Daml authors.
 
 These exclusions are not permanent. They are scope boundaries that keep the core feature understandable and reviewable.
+
+## Where The Work Lives
+
+This feature should be understood as a two-repository change.
+
+The **Daml repository** owns the part that application developers see and the compiler/LF rules that make the API sound. It would need to define the public `DA.External.externalCall` type, preserve concrete input and output types during compilation, enforce `Serializable` constraints, reject unsupported types, and ensure package validation cannot be bypassed by generated or hand-written LF. This is the more controversial part of the proposal because it asks Daml to provide a principled way for a polymorphic public API to lower into an LF builtin while retaining type information needed by the runtime. The prototype solved this with a direct compiler special case, but an upstreamable version should use a design that Digital Asset's Daml maintainers are comfortable owning long term.
+
+The **Canton repository** owns the runtime and protocol behavior once the Daml/LF layer has made the call explicit. Canton needs to encode the evaluated input value as LF value bytes, invoke the configured extension service, decode the returned bytes, validate the decoded value against the expected output type, categorize failures correctly, and record the external-call evidence needed for replay and validation. These changes are still important, especially for determinism and security, but they fit naturally into the existing external-call runtime model.
+
+The boundary between the two repositories is therefore crucial. Daml must tell Canton exactly which input and output types are expected. Canton must not guess those types from service output. Canton should enforce the runtime byte and validation semantics, while Daml should enforce the language-level typing and serializability rules.
 
 ## What We Already Proved
 
