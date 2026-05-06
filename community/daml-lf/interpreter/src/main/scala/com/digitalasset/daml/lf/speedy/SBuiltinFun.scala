@@ -14,6 +14,7 @@ import com.digitalasset.daml.lf.data._
 import com.digitalasset.daml.lf.data.support._
 import com.digitalasset.daml.lf.interpretation.{Error => IE}
 import com.digitalasset.daml.lf.language.Ast
+import com.digitalasset.daml.lf.language.iterable.TypeIterable
 import com.digitalasset.daml.lf.speedy.metrics.TxNodeCount
 import com.digitalasset.daml.lf.speedy.SError._
 import com.digitalasset.daml.lf.speedy.SExpr._
@@ -910,115 +911,239 @@ private[lf] object SBuiltinFun {
   }
 
   final case class SBExternalCall(inputType: Ast.Type, outputType: Ast.Type) extends UpdateBuiltin(5) {
+    import SBExternalCall._
+
     override protected def executeUpdate(
         args: ArraySeq[SValue],
         machine: UpdateMachine,
     ): Control[Question.Update] = {
       val extensionId = getSText(args, 0)
       val functionId = getSText(args, 1)
-      val configRaw = getSText(args, 2)
-      val inputValue = args(3).toNormalizedValue
+      val configHex = getSText(args, 2)
       checkToken(args, 4)
-      val configHex = configRaw.trim.toLowerCase(java.util.Locale.ROOT)
 
       machine.updateGasBudget(_.BExternalCall.cost(functionId))
 
-      ValueCoder.encodeValue(SerializationVersion.VDev, inputValue) match {
+      if (containsTypeVariable(inputType) || containsTypeVariable(outputType)) {
+        Control.Error(
+          IE.ExternalCall(
+            IE.ExternalCall.Internal(
+              s"unresolved external-call type: inputType=${inputType.pretty}, outputType=${outputType.pretty}"
+            )
+          )
+        )
+      } else if (!isStrictLowerHex(configHex)) {
+        Control.Error(
+          IE.ExternalCall(
+            IE.ExternalCall.Preparation("invalid config hex; expected even-length lowercase hex")
+          )
+        )
+      } else if (configHex.length > MaxConfigHexLength) {
+        Control.Error(
+          IE.ExternalCall(
+            IE.ExternalCall.Preparation(
+              s"config too large: ${configHex.length / 2} bytes exceeds $MaxConfigBytes bytes"
+            )
+          )
+        )
+      } else if (!machine.ptx.canRecordExternalCallResult) {
+        Control.Error(IE.ExternalCall(
+          IE.ExternalCall.Preparation(
+            s"external calls are only supported within exercise context. " +
+              s"extensionId=$extensionId, functionId=$functionId"
+          )
+        ))
+      } else if (SValue.addContractIds(args(3), Set.empty).nonEmpty) {
+        Control.Error(
+          IE.ExternalCall(
+            IE.ExternalCall.Preparation("external call input must not contain ContractId values")
+          )
+        )
+      } else {
+        val inputValue = args(3).toNormalizedValue
+        encodeInput(inputValue, extensionId, functionId, configHex, machine)
+      }
+    }
+
+    private def encodeInput(
+        inputValue: V,
+        extensionId: String,
+        functionId: String,
+        configHex: String,
+        machine: UpdateMachine,
+    ): Control[Question.Update] =
+      ValueCoder.encodeValue(ValueSerializationVersion, inputValue) match {
         case Left(ValueCoder.EncodeError(message)) =>
           Control.Error(
-            IE.UserError(
-              s"External call failed: could not encode input value as LF value bytes: $message"
+            IE.ExternalCall(
+              IE.ExternalCall.Preparation(
+                s"could not encode input value as LF value bytes: $message"
+              )
             )
           )
         case Right(inputBytes) =>
           val inputHex = Bytes.fromByteString(inputBytes).toHexString
-
-          Ref.HexString.fromString(configHex) match {
-            case Right(_) =>
-              if (!machine.ptx.canRecordExternalCallResult) {
-                Control.Error(IE.UserError(
-                  s"External calls are only supported within exercise context. " +
-                    s"extensionId=$extensionId, functionId=$functionId"
-                ))
-              } else
-              // Use question/answer pattern - participant handles the actual HTTP call
-              machine.needExternalCall(
-                extensionId = extensionId,
-                functionId = functionId,
-                configHash = configHex,
-                input = inputHex,
-              ) {
-                case Right(responseBodyRaw) =>
-                  val outputHex = responseBodyRaw.trim.toLowerCase(java.util.Locale.ROOT)
-                  Ref.HexString.fromString(outputHex) match {
-                    case Right(outputHexString) =>
-                      ValueCoder.decodeValue(
-                        SerializationVersion.VDev,
-                        Bytes.fromHexString(outputHexString).toByteString,
-                      ) match {
-                        case Left(ValueCoder.DecodeError(message)) =>
-                          Control.Error(
-                            IE.UserError(
-                              s"External call failed: could not decode external call output as LF value bytes: $message"
-                            )
-                          )
-                        case Right(outputValue) =>
-                          new ValueTranslator(
-                            machine.compiledPackages.pkgInterface,
-                            forbidLocalContractIds = true,
-                            forbidTrailingNones = true,
-                          ).translateValue(outputType, outputValue).fold(
-                            translationError =>
-                              Control.Error(
-                                IE.UserError(
-                                  s"External call failed: external call output does not match expected type ${outputType.pretty}: $translationError"
-                                )
-                              ),
-                            { outputSValue =>
-                              // The external-call question is only issued after confirming that the
-                              // current partial transaction can record a result, so resuming here must
-                              // still be inside an enclosing exercise context.
-                              val updatedPtx = machine.ptx.recordExternalCallResult(
-                                extensionId = extensionId,
-                                functionId = functionId,
-                                configHash = configHex,
-                                inputHex = inputHex,
-                                outputHex = outputHex,
-                              ).getOrElse(
-                                InternalError.runtimeException(
-                                  NameOf.qualifiedNameOfCurrentFunc,
-                                  s"lost enclosing exercise context while resuming external call " +
-                                    s"(extensionId=$extensionId, functionId=$functionId)",
-                                )
-                              )
-                              machine.ptx = updatedPtx
-                              Control.Value(outputSValue)
-                            },
-                          )
-                      }
-                    case Left(_) =>
-                      Control.Error(
-                        IE.UserError(
-                          "External call failed: Invalid hex encoding in external call output"
-                        )
-                      )
-                  }
-                case Left(error) =>
-                  // Propagate error with full context for proper error handling
-                  val errorMsg = s"External call failed: ${error.message}" +
-                    s" (status=${error.statusCode}" +
-                    error.requestId.map(id => s", requestId=$id").getOrElse("") +
-                    s", extensionId=$extensionId, functionId=$functionId)"
-                  Control.Error(IE.UserError(errorMsg))
-              }
-            case Left(_) =>
-              Control.Error(
-                IE.UserError(s"External call failed: Invalid hex encoding in config")
+          if (inputHex.length > MaxPayloadHexLength) {
+            Control.Error(
+              IE.ExternalCall(
+                IE.ExternalCall.Preparation(
+                  s"encoded input too large: ${inputHex.length / 2} bytes exceeds $MaxPayloadBytes bytes"
+                )
               )
+            )
+          } else {
+            val valueSerializationVersion =
+              ValueSerializationVersion
+
+            machine.needExternalCall(
+              extensionId = extensionId,
+              functionId = functionId,
+              configHash = configHex,
+              input = inputHex,
+              inputType = inputType.pretty,
+              outputType = outputType.pretty,
+              valueSerializationVersion = valueSerializationVersion,
+            ) {
+              case Right(outputHex) =>
+                decodeOutput(
+                  outputHex = outputHex,
+                  extensionId = extensionId,
+                  functionId = functionId,
+                  configHex = configHex,
+                  inputHex = inputHex,
+                  valueSerializationVersion = valueSerializationVersion,
+                  machine = machine,
+                )
+              case Left(error) =>
+                Control.Error(
+                  IE.ExternalCall(
+                    IE.ExternalCall.Execution(
+                      statusCode = error.statusCode,
+                      message = error.message,
+                      requestId = error.requestId,
+                      extensionId = extensionId,
+                      functionId = functionId,
+                    )
+                  )
+                )
+            }
+          }
+      }
+
+    private def decodeOutput(
+        outputHex: String,
+        extensionId: String,
+        functionId: String,
+        configHex: String,
+        inputHex: String,
+        valueSerializationVersion: SerializationVersion,
+        machine: UpdateMachine,
+    ): Control[Question.Update] =
+      if (!isStrictLowerHex(outputHex)) {
+        Control.Error(
+          IE.ExternalCall(
+            IE.ExternalCall.InvalidOutput(
+              "invalid output hex; expected even-length lowercase hex"
+            )
+          )
+        )
+      } else if (outputHex.length > MaxPayloadHexLength) {
+        Control.Error(
+          IE.ExternalCall(
+            IE.ExternalCall.InvalidOutput(
+              s"output too large: ${outputHex.length / 2} bytes exceeds $MaxPayloadBytes bytes"
+            )
+          )
+        )
+      } else {
+        Ref.HexString.fromString(outputHex) match {
+          case Left(_) =>
+            Control.Error(
+              IE.ExternalCall(
+                IE.ExternalCall.InvalidOutput(
+                  "invalid output hex; expected even-length lowercase hex"
+                )
+              )
+            )
+          case Right(outputHexString) =>
+            ValueCoder.decodeValue(
+              valueSerializationVersion,
+              Bytes.fromHexString(outputHexString).toByteString,
+            ) match {
+              case Left(ValueCoder.DecodeError(message)) =>
+                Control.Error(
+                  IE.ExternalCall(
+                    IE.ExternalCall.InvalidOutput(
+                      s"could not decode output as LF value bytes: $message"
+                    )
+                  )
+                )
+              case Right(outputValue) if outputValue.cids.nonEmpty =>
+                Control.Error(
+                  IE.ExternalCall(
+                    IE.ExternalCall.InvalidOutput(
+                      "external call output must not contain ContractId values"
+                    )
+                  )
+                )
+              case Right(outputValue) =>
+                new ValueTranslator(
+                  machine.compiledPackages.pkgInterface,
+                  forbidLocalContractIds = true,
+                  forbidTrailingNones = true,
+                ).translateValue(outputType, outputValue).fold(
+                  translationError =>
+                    Control.Error(
+                      IE.ExternalCall(
+                        IE.ExternalCall.OutputTypeMismatch(outputType, translationError.toString)
+                      )
+                    ),
+                  { outputSValue =>
+                    val updatedPtx = machine.ptx.recordExternalCallResult(
+                      extensionId = extensionId,
+                      functionId = functionId,
+                      configHash = configHex,
+                      inputHex = inputHex,
+                      outputHex = outputHex,
+                      valueSerializationVersion = valueSerializationVersion,
+                    ).getOrElse(
+                      InternalError.runtimeException(
+                        NameOf.qualifiedNameOfCurrentFunc,
+                        s"lost enclosing exercise context while resuming external call " +
+                          s"(extensionId=$extensionId, functionId=$functionId)",
+                      )
+                    )
+                    machine.ptx = updatedPtx
+                    Control.Value(outputSValue)
+                  },
+                )
+            }
+        }
+      }
+  }
+
+  object SBExternalCall {
+    private val ValueSerializationVersion = SerializationVersion.V2
+    private val MaxConfigBytes = 4096
+    private val MaxPayloadBytes = 1024 * 1024
+    private val MaxConfigHexLength = MaxConfigBytes * 2
+    private val MaxPayloadHexLength = MaxPayloadBytes * 2
+
+    private def isStrictLowerHex(value: String): Boolean =
+      value.length % 2 == 0 && value.forall { ch =>
+        (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')
+      }
+
+    private def containsTypeVariable(typ: Ast.Type): Boolean =
+      typ match {
+        case Ast.TVar(_) => true
+        case _ =>
+          TypeIterable(typ).exists {
+            case Ast.TVar(_) => true
+            case _ => false
           }
       }
     }
-  }
 
   final case object SBFoldl extends SBuiltinFun(3) {
     override private[speedy] def execute[Q](

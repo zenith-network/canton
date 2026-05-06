@@ -223,14 +223,40 @@ final class PreparedTransactionDecoder(override val loggerFactory: NamedLoggerFa
       .withFieldConst(_.byKey, false)
       .buildTransformer
 
-    // Transformer for ByteString -> LfBytes (used by external call results)
-    private implicit val byteStringToLfBytesTransformer: Transformer[ByteString, lf.data.Bytes] =
-      (bs: ByteString) => lf.data.Bytes.fromByteString(bs)
-
     // Transformer for external call results
     private implicit val externalCallResultTransformer
-        : Transformer[isdv1.ExternalCallResult, lf.transaction.ExternalCallResult] =
-      Transformer.derive[isdv1.ExternalCallResult, lf.transaction.ExternalCallResult]
+        : PartialTransformer[isdv1.ExternalCallResult, lf.transaction.ExternalCallResult] =
+      PartialTransformer { src =>
+        val valueSerializationVersion =
+          if (src.valueSerializationVersion.isEmpty) LfSerializationVersion.V2
+          else
+            LfSerializationVersion
+              .fromString(src.valueSerializationVersion)
+              .getOrElse(LfSerializationVersion.V2)
+        Result.fromValue(
+          lf.transaction.ExternalCallResult(
+            extensionId = src.extensionId,
+            functionId = src.functionId,
+            config = lf.data.Bytes.fromByteString(src.config),
+            input = lf.data.Bytes.fromByteString(src.input),
+            output = lf.data.Bytes.fromByteString(src.output),
+            valueSerializationVersion = valueSerializationVersion,
+          )
+        )
+      }
+
+    private def decodeExternalCallResults(
+        results: Seq[isdv1.ExternalCallResult]
+    ): Result[ImmArray[lf.transaction.ExternalCallResult]] =
+      results
+        .foldLeft(Result.fromValue(Vector.empty[lf.transaction.ExternalCallResult])) {
+          (acc, result) =>
+            for {
+              decoded <- result.transformIntoPartial[lf.transaction.ExternalCallResult]
+              values <- acc
+            } yield values :+ decoded
+        }
+        .map(ImmArray.from)
 
     private[interactive] implicit def exerciseTransformer(implicit
         errorLoggingContext: ErrorLoggingContext
@@ -250,12 +276,9 @@ final class PreparedTransactionDecoder(override val loggerFactory: NamedLoggerFa
         .withFieldConst(_.keyOpt, None)
         .withFieldConst(_.byKey, false)
         .withFieldConst(_.choiceAuthorizers, None)
-        .withFieldComputed(
+        .withFieldComputedPartial(
           _.externalCallResults,
-          ex =>
-            ImmArray.from(
-              ex.externalCallResults.map(_.transformInto[lf.transaction.ExternalCallResult])
-            ),
+          ex => decodeExternalCallResults(ex.externalCallResults),
         )
         .buildTransformer
 

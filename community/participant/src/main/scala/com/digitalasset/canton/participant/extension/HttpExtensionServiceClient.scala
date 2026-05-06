@@ -46,6 +46,8 @@ class HttpExtensionServiceClient(
   private val endpoint: URI =
     URI.create(s"$scheme://${config.host}:${config.port}/api/v1/external-call")
 
+  private val ExternalCallProtocolVersion = 1
+
   // Load JWT token from config or file
   private lazy val jwtToken: Option[String] =
     config.jwt.orElse {
@@ -69,11 +71,23 @@ class HttpExtensionServiceClient(
       input: String,
       mode: String,
       commandId: String,
+      inputType: String,
+      outputType: String,
+      valueSerializationVersion: String,
   )(implicit tc: TraceContext): FutureUnlessShutdown[Either[ExtensionCallError, String]] =
     FutureUnlessShutdown.outcomeF {
       Future {
         blocking {
-          callWithRetry(functionId, configHash, input, mode, commandId)
+          callWithRetry(
+            functionId,
+            configHash,
+            input,
+            mode,
+            commandId,
+            inputType,
+            outputType,
+            valueSerializationVersion,
+          )
         }
       }
     }
@@ -141,6 +155,9 @@ class HttpExtensionServiceClient(
       input: String,
       mode: String,
       commandId: String,
+      inputType: String,
+      outputType: String,
+      valueSerializationVersion: String,
   )(implicit tc: TraceContext): Either[ExtensionCallError, String] = {
     val deadlineMs = System.currentTimeMillis() + config.maxTotalTimeout.underlying.toMillis
 
@@ -166,7 +183,16 @@ class HttpExtensionServiceClient(
         )
         Left(finalError)
       } else {
-        val result = singleCall(functionId, configHash, input, mode, commandId)
+        val result = singleCall(
+          functionId,
+          configHash,
+          input,
+          mode,
+          commandId,
+          inputType,
+          outputType,
+          valueSerializationVersion,
+        )
 
         result match {
           case Right(response) =>
@@ -215,15 +241,34 @@ class HttpExtensionServiceClient(
       input: String,
       mode: String,
       commandId: String,
+      inputType: String,
+      outputType: String,
+      valueSerializationVersion: String,
   )(implicit tc: TraceContext): Either[ExtensionCallError, String] = {
     val requestId = generateRequestId()
 
     try {
+      val requestBody = ujson.write(
+        ujson.Obj(
+          "protocolVersion" -> ExternalCallProtocolVersion,
+          "extensionId" -> extensionId,
+          "functionId" -> functionId,
+          "configHex" -> configHash,
+          "inputHex" -> input,
+          "inputType" -> inputType,
+          "outputType" -> outputType,
+          "valueSerializationVersion" -> valueSerializationVersion,
+          "mode" -> mode,
+          "submissionId" -> commandId,
+          "requestId" -> requestId,
+        )
+      )
       val requestBuilder = HttpRequest
         .newBuilder()
         .uri(endpoint)
         .timeout(Duration.ofMillis(config.requestTimeout.underlying.toMillis))
-        .header("Content-Type", "application/octet-stream")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
         .header("X-Daml-External-Function-Id", functionId)
         .header("X-Daml-External-Config-Hash", configHash)
         .header("X-Daml-External-Mode", mode)
@@ -235,11 +280,11 @@ class HttpExtensionServiceClient(
       }
 
       val req = requestBuilder
-        .POST(HttpRequest.BodyPublishers.ofString(input))
+        .POST(HttpRequest.BodyPublishers.ofString(requestBody))
         .build()
 
       logger.debug(
-        s"Making external call to extension '$extensionId': functionId=$functionId, mode=$mode, requestId=$requestId"
+        s"Making external call to extension '$extensionId': functionId=$functionId, mode=$mode, requestId=$requestId, inputBytes=${input.length / 2}"
       )
 
       val resp = sharedHttpClient.send(req, HttpResponse.BodyHandlers.ofString())
@@ -247,7 +292,7 @@ class HttpExtensionServiceClient(
       resp.statusCode() match {
         case 200 =>
           logger.debug(s"External call to extension '$extensionId' succeeded: requestId=$requestId")
-          Right(resp.body())
+          parseSuccessResponse(resp.body(), requestId)
 
         case 400 =>
           Left(parseErrorResponse(resp, requestId, "Bad Request"))
@@ -306,6 +351,71 @@ class HttpExtensionServiceClient(
         Left(ExtensionCallError(500, s"Unexpected error: ${e.getMessage}", Some(requestId)))
     }
   }
+
+  private def parseSuccessResponse(
+      body: String,
+      requestId: String,
+  ): Either[ExtensionCallError, String] =
+    Try(ujson.read(body)).toEither.left
+      .map(e =>
+        ExtensionCallError(
+          502,
+          s"Malformed external-call response JSON: ${e.getMessage}",
+          Some(requestId),
+        )
+      )
+      .flatMap {
+        case obj: ujson.Obj =>
+          val protocolVersion =
+            obj.value.get("protocolVersion").collect {
+              case ujson.Num(value)
+                  if value.isWhole && value >= Int.MinValue && value <= Int.MaxValue =>
+                value.toInt
+            }
+          val outputHex =
+            obj.value.get("outputHex").collect { case ujson.Str(value) => value }
+          (protocolVersion, outputHex) match {
+            case (Some(ExternalCallProtocolVersion), Some(output)) if isStrictLowerHex(output) =>
+              Right(output)
+            case (Some(version), Some(_)) if version != ExternalCallProtocolVersion =>
+              Left(
+                ExtensionCallError(
+                  502,
+                  s"Unsupported external-call response protocolVersion: $version",
+                  Some(requestId),
+                )
+              )
+            case (Some(_), Some(_)) =>
+              Left(
+                ExtensionCallError(
+                  502,
+                  "External-call response outputHex must be even-length lowercase hex",
+                  Some(requestId),
+                )
+              )
+            case _ =>
+              Left(
+                ExtensionCallError(
+                  502,
+                  "External-call response must contain protocolVersion and outputHex",
+                  Some(requestId),
+                )
+              )
+          }
+        case _ =>
+          Left(
+            ExtensionCallError(
+              502,
+              "External-call response must be a JSON object",
+              Some(requestId),
+            )
+          )
+      }
+
+  private def isStrictLowerHex(value: String): Boolean =
+    value.length % 2 == 0 && value.forall { ch =>
+      (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')
+    }
 
   private def parseErrorResponse(
       resp: HttpResponse[String],

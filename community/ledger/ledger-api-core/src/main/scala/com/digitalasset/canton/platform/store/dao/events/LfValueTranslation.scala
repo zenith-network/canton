@@ -547,7 +547,7 @@ final class LfValueTranslation(
           case LfEngine.ResultPrefetch(_, _, resume) =>
             goAsync(resume())
 
-          case LfEngine.ResultNeedExternalCall(_, _, _, _, _) =>
+          case LfEngine.ResultNeedExternalCall(_, _, _, _, _, _, _, _) =>
             Future.failed(
               new IllegalStateException("External calls are not supported during view computation")
             )

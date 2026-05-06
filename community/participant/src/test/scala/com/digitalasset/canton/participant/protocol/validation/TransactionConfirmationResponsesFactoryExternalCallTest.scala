@@ -10,6 +10,7 @@ import com.digitalasset.canton.protocol.messages.{ConfirmationResponse, LocalApp
 import com.digitalasset.canton.topology.DefaultTestIdentities
 import com.digitalasset.canton.{BaseTest, LfPartyId}
 import com.digitalasset.daml.lf.data.Bytes as LfBytes
+import com.digitalasset.daml.lf.transaction.SerializationVersion
 import org.scalatest.wordspec.AnyWordSpec
 
 /** Unit tests for external call consistency integration in TransactionConfirmationResponsesFactory.
@@ -36,7 +37,13 @@ class TransactionConfirmationResponsesFactoryExternalCallTest extends AnyWordSpe
 
   // Helper to create test keys
   private def key(functionId: String): ExternalCallKey =
-    ExternalCallKey("test-ext", functionId, bytes("c0ffee"), bytes("cafe"))
+    ExternalCallKey(
+      "test-ext",
+      functionId,
+      bytes("c0ffee"),
+      bytes("cafe"),
+      SerializationVersion.V2,
+    )
 
   "ExternalCallConsistencyResults" when {
 

@@ -8,6 +8,7 @@ import com.digitalasset.canton.data.ViewPosition
 import com.digitalasset.canton.participant.protocol.validation.ExternalCallConsistencyChecker.*
 import com.digitalasset.canton.LfPartyId
 import com.digitalasset.daml.lf.data.Bytes as LfBytes
+import com.digitalasset.daml.lf.transaction.SerializationVersion
 import org.scalatest.wordspec.AnyWordSpec
 
 class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
@@ -34,6 +35,7 @@ class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
       functionId = functionId,
       config = toBytes("config1"),
       input = input,
+      valueSerializationVersion = SerializationVersion.V2,
     )
 
   // Helper to create ExternalCallWithContext
@@ -54,32 +56,102 @@ class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
   "ExternalCallKey" should {
 
     "be equal for identical calls" in {
-      val key1 = ExternalCallKey("ext1", "func1", toBytes("config1"), toBytes("input1"))
-      val key2 = ExternalCallKey("ext1", "func1", toBytes("config1"), toBytes("input1"))
+      val key1 =
+        ExternalCallKey(
+          "ext1",
+          "func1",
+          toBytes("config1"),
+          toBytes("input1"),
+          SerializationVersion.V2,
+        )
+      val key2 =
+        ExternalCallKey(
+          "ext1",
+          "func1",
+          toBytes("config1"),
+          toBytes("input1"),
+          SerializationVersion.V2,
+        )
       key1 shouldBe key2
     }
 
     "be different when extensionId differs" in {
-      val key1 = ExternalCallKey("ext1", "func1", toBytes("config1"), toBytes("input1"))
-      val key2 = ExternalCallKey("ext2", "func1", toBytes("config1"), toBytes("input1"))
+      val key1 =
+        ExternalCallKey(
+          "ext1",
+          "func1",
+          toBytes("config1"),
+          toBytes("input1"),
+          SerializationVersion.V2,
+        )
+      val key2 =
+        ExternalCallKey(
+          "ext2",
+          "func1",
+          toBytes("config1"),
+          toBytes("input1"),
+          SerializationVersion.V2,
+        )
       key1 should not be key2
     }
 
     "be different when functionId differs" in {
-      val key1 = ExternalCallKey("ext1", "func1", toBytes("config1"), toBytes("input1"))
-      val key2 = ExternalCallKey("ext1", "func2", toBytes("config1"), toBytes("input1"))
+      val key1 =
+        ExternalCallKey(
+          "ext1",
+          "func1",
+          toBytes("config1"),
+          toBytes("input1"),
+          SerializationVersion.V2,
+        )
+      val key2 =
+        ExternalCallKey(
+          "ext1",
+          "func2",
+          toBytes("config1"),
+          toBytes("input1"),
+          SerializationVersion.V2,
+        )
       key1 should not be key2
     }
 
     "be different when config differs" in {
-      val key1 = ExternalCallKey("ext1", "func1", toBytes("config1"), toBytes("input1"))
-      val key2 = ExternalCallKey("ext1", "func1", toBytes("config2"), toBytes("input1"))
+      val key1 =
+        ExternalCallKey(
+          "ext1",
+          "func1",
+          toBytes("config1"),
+          toBytes("input1"),
+          SerializationVersion.V2,
+        )
+      val key2 =
+        ExternalCallKey(
+          "ext1",
+          "func1",
+          toBytes("config2"),
+          toBytes("input1"),
+          SerializationVersion.V2,
+        )
       key1 should not be key2
     }
 
     "be different when input differs" in {
-      val key1 = ExternalCallKey("ext1", "func1", toBytes("config1"), toBytes("input1"))
-      val key2 = ExternalCallKey("ext1", "func1", toBytes("config1"), toBytes("input2"))
+      val key1 =
+        ExternalCallKey(
+          "ext1",
+          "func1",
+          toBytes("config1"),
+          toBytes("input1"),
+          SerializationVersion.V2,
+        )
+      val key2 =
+        ExternalCallKey(
+          "ext1",
+          "func1",
+          toBytes("config1"),
+          toBytes("input2"),
+          SerializationVersion.V2,
+        )
       key1 should not be key2
     }
 
@@ -91,7 +163,14 @@ class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
     }
 
     "have proper pretty printing" in {
-      val k = ExternalCallKey("ext1", "func1", toBytes("config1"), toBytes("input1"))
+      val k =
+        ExternalCallKey(
+          "ext1",
+          "func1",
+          toBytes("config1"),
+          toBytes("input1"),
+          SerializationVersion.V2,
+        )
       val prettyStr = k.toString
       prettyStr should include("ext1")
       prettyStr should include("func1")

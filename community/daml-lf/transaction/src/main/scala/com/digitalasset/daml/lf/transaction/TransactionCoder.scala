@@ -299,6 +299,9 @@ class TransactionCoder(allowNullCharacters: Boolean) {
         .setConfig(result.config.toByteString)
         .setInput(result.input.toByteString)
         .setOutput(result.output.toByteString)
+        .setValueSerializationVersion(
+          SerializationVersion.toProtoValue(result.valueSerializationVersion)
+        )
         .build()
 
     private[this] def encodeExercise(
@@ -583,6 +586,10 @@ class TransactionCoder(allowNullCharacters: Boolean) {
         config = data.Bytes.fromByteString(proto.getConfig),
         input = data.Bytes.fromByteString(proto.getInput),
         output = data.Bytes.fromByteString(proto.getOutput),
+        valueSerializationVersion =
+          SerializationVersion
+            .fromString(proto.getValueSerializationVersion)
+            .getOrElse(SerializationVersion.V2),
       )
 
     private[this] def decodeExercise(

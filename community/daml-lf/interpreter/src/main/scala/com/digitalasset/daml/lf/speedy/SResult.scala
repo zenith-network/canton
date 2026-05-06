@@ -8,7 +8,12 @@ import com.digitalasset.daml.lf.crypto.Hash
 import com.digitalasset.daml.lf.data.Ref.*
 import com.digitalasset.daml.lf.data.Time
 import com.digitalasset.daml.lf.speedy.SError.*
-import com.digitalasset.daml.lf.transaction.{FatContractInstance, GlobalKey, NeedKeyProgression}
+import com.digitalasset.daml.lf.transaction.{
+  FatContractInstance,
+  GlobalKey,
+  NeedKeyProgression,
+  SerializationVersion,
+}
 import com.digitalasset.daml.lf.value.Value.ContractId
 
 object Question {
@@ -57,6 +62,9 @@ object Question {
       * @param functionId Function identifier within the extension
       * @param configHash Configuration hash (hex) for version validation
       * @param input Hex-encoded LF value payload
+      * @param inputType Daml-LF type of the encoded input
+      * @param outputType Daml-LF type expected for the response
+      * @param valueSerializationVersion LF value serialization version used for input/output bytes
       * @param callback Callback to provide the result or error
       */
     final case class NeedExternalCall(
@@ -64,6 +72,9 @@ object Question {
         functionId: String,
         configHash: String,
         input: String,
+        inputType: String,
+        outputType: String,
+        valueSerializationVersion: SerializationVersion,
         callback: Either[ExternalCallError, String] => Unit,
     ) extends Update
 

@@ -35,7 +35,7 @@ import com.digitalasset.canton.util.NoCopy
 import com.digitalasset.canton.version.ProtocolVersion
 import com.digitalasset.canton.{LfChoiceName, LfInterfaceId, LfPackageId, LfPartyId, LfVersioned}
 import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
-import com.digitalasset.daml.lf.transaction.ExternalCallResult
+import com.digitalasset.daml.lf.transaction.{ExternalCallResult, SerializationVersion}
 import com.digitalasset.daml.lf.value.{Value, ValueCoder, ValueOuterClass}
 import com.google.common.annotations.VisibleForTesting
 import com.google.protobuf.ByteString
@@ -213,6 +213,9 @@ object ActionDescription {
           config = Bytes.fromByteString(r.config),
           input = Bytes.fromByteString(r.input),
           output = Bytes.fromByteString(r.output),
+          valueSerializationVersion = SerializationVersion
+            .fromString(r.valueSerializationVersion)
+            .getOrElse(SerializationVersion.V2),
         )
       })
       actionDescription <- ExerciseActionDescription
@@ -373,6 +376,8 @@ object ActionDescription {
             config = r.config.toByteString,
             input = r.input.toByteString,
             output = r.output.toByteString,
+            valueSerializationVersion =
+              SerializationVersion.toProtoValue(r.valueSerializationVersion),
           )
         },
       )

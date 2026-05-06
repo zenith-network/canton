@@ -113,10 +113,22 @@ class ExtensionServiceManager(
       input: String,
       mode: String,
       commandId: String,
+      inputType: String = "",
+      outputType: String = "",
+      valueSerializationVersion: String = "2",
   )(implicit tc: TraceContext): FutureUnlessShutdown[Either[ExtensionCallError, String]] =
     clients.get(extensionId) match {
       case Some(client) =>
-        client.call(functionId, configHash, input, mode, commandId)
+        client.call(
+          functionId,
+          configHash,
+          input,
+          mode,
+          commandId,
+          inputType,
+          outputType,
+          valueSerializationVersion,
+        )
       case None =>
         FutureUnlessShutdown.pure(
           Left(
@@ -199,6 +211,9 @@ private class EchoExtensionServiceClient(override val extensionId: String)
       input: String,
       mode: String,
       commandId: String,
+      inputType: String,
+      outputType: String,
+      valueSerializationVersion: String,
   )(implicit tc: TraceContext): FutureUnlessShutdown[Either[ExtensionCallError, String]] =
     // Echo mode: return input as output
     FutureUnlessShutdown.pure(Right(input))

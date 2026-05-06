@@ -920,6 +920,28 @@ private[validation] object Typing {
       }
 
     private def typeOfTyApp(expr: Expr, typs: List[Type]): Work[Type] = {
+      def checkExternalCallType(requirement: SerializabilityRequirement, typ: Type): Unit = {
+        val serializableTypeVars = tVars.collect { case (name, KStar) => name }.toSet
+        Serializability
+          .Env(pkgInterface, ctx, requirement, typ, vars = serializableTypeVars)
+          .checkType()
+        val containsContractId = (Iterator.single(typ) ++ TypeIterable(typ)).exists {
+          case TApp(TBuiltin(BTContractId), _) => true
+          case _ => false
+        }
+        if (containsContractId)
+          throw EExpectedSerializableType(ctx, requirement, typ, URContractId)
+      }
+
+      expr match {
+        case EBuiltinFun(BExternalCall) =>
+          typs.headOption.foreach(checkExternalCallType(SRExternalCallInput, _))
+          typs.drop(1).headOption.foreach(checkExternalCallType(SRExternalCallOutput, _))
+        case ETyApp(EBuiltinFun(BExternalCall), _) =>
+          typs.headOption.foreach(checkExternalCallType(SRExternalCallOutput, _))
+        case _ =>
+      }
+
       @tailrec
       def loopForall(body0: Type, typs: List[Type], acc: Map[TypeVarName, Type]): Type =
         typs match {

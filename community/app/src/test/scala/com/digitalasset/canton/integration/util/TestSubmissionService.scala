@@ -388,7 +388,7 @@ class TestSubmissionService(
 
       case ResultPrefetch(_, _, resume) => resolve(resume())
 
-      case ResultNeedExternalCall(extensionId, functionId, _, _, _) =>
+      case ResultNeedExternalCall(extensionId, functionId, _, _, _, _, _, _) =>
         Future.successful(
           Left(
             Error.Interpretation(

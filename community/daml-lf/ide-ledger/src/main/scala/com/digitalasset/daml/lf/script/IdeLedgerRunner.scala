@@ -414,7 +414,7 @@ private[lf] object IdeLedgerRunner {
             case Question.Update.NeedTime(callback) =>
               callback(ledger.currentTime)
               go()
-            case Question.Update.NeedExternalCall(_, _, _, _, _) =>
+            case Question.Update.NeedExternalCall(_, _, _, _, _, _, _, _) =>
               throw Error.Internal("External calls are not supported in the IDE ledger")
             case res: Question.Update.NeedPackage =>
               throw Error.Internal(s"unexpected $res")

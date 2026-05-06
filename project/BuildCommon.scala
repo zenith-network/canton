@@ -1218,6 +1218,7 @@ object BuildCommon {
           scalapb_runtime, // not sufficient to include only through the `common` dependency - race conditions ensue
           scalatest % Test,
           scalatestScalacheck % Test,
+          ujson,
         ),
         excludeTranscodeConflictingDependencies,
         Compile / PB.targets := Seq(

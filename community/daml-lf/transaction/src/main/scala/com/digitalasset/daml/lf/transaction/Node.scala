@@ -20,6 +20,7 @@ import com.digitalasset.daml.lf.value._
   * @param config Extension configuration (binary)
   * @param input Input data (binary)
   * @param output Output data (binary)
+  * @param valueSerializationVersion Serialization version used for input and output value bytes
   */
 final case class ExternalCallResult(
     extensionId: String,
@@ -27,6 +28,7 @@ final case class ExternalCallResult(
     config: data.Bytes,
     input: data.Bytes,
     output: data.Bytes,
+    valueSerializationVersion: SerializationVersion,
 )
 
 object ExternalCallResult {

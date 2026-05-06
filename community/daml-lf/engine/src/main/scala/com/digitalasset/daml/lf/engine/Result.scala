@@ -14,6 +14,7 @@ import com.digitalasset.daml.lf.transaction.{
   FatContractInstance,
   GlobalKey,
   NeedKeyProgression,
+  SerializationVersion,
 }
 import com.digitalasset.daml.lf.value.Value._
 import scalaz.Monad
@@ -38,8 +39,26 @@ sealed trait Result[+A] extends Product with Serializable {
       ResultNeedKey(gk, limit, token, (cids, token) => resume(cids, token).map(f))
     case ResultPrefetch(contractIds, keys, resume) =>
       ResultPrefetch(contractIds, keys, () => resume().map(f))
-    case ResultNeedExternalCall(extId, funcId, configHash, input, resume) =>
-      ResultNeedExternalCall(extId, funcId, configHash, input, result => resume(result).map(f))
+    case ResultNeedExternalCall(
+          extId,
+          funcId,
+          configHash,
+          input,
+          inputType,
+          outputType,
+          valueSerializationVersion,
+          resume,
+        ) =>
+      ResultNeedExternalCall(
+        extId,
+        funcId,
+        configHash,
+        input,
+        inputType,
+        outputType,
+        valueSerializationVersion,
+        result => resume(result).map(f),
+      )
   }
 
   def flatMap[B](f: A => Result[B]): Result[B] = this match {
@@ -60,8 +79,26 @@ sealed trait Result[+A] extends Product with Serializable {
       )
     case ResultPrefetch(contractIds, keys, resume) =>
       ResultPrefetch(contractIds, keys, () => resume().flatMap(f))
-    case ResultNeedExternalCall(extId, funcId, configHash, input, resume) =>
-      ResultNeedExternalCall(extId, funcId, configHash, input, result => resume(result).flatMap(f))
+    case ResultNeedExternalCall(
+          extId,
+          funcId,
+          configHash,
+          input,
+          inputType,
+          outputType,
+          valueSerializationVersion,
+          resume,
+        ) =>
+      ResultNeedExternalCall(
+        extId,
+        funcId,
+        configHash,
+        input,
+        inputType,
+        outputType,
+        valueSerializationVersion,
+        result => resume(result).flatMap(f),
+      )
   }
 
   private[lf] def consume(
@@ -90,7 +127,7 @@ sealed trait Result[+A] extends Product with Serializable {
         case ResultNeedKey(key, _, _, resume) =>
           go(resume(keys.lift(key).getOrElse(Vector.empty), NeedKeyProgression.Finished))
         case ResultPrefetch(_, _, result) => go(result())
-        case ResultNeedExternalCall(extId, funcId, configHash, input, resume) =>
+        case ResultNeedExternalCall(extId, funcId, configHash, input, _, _, _, resume) =>
           externalCalls.lift((extId, funcId, configHash, input)) match {
             case Some(output) => go(resume(Right(output)))
             case None =>
@@ -225,6 +262,9 @@ final case class ResultPrefetch[A](
   * @param functionId Function identifier within the extension
   * @param configHash Configuration hash (hex) for version validation
   * @param input Hex-encoded LF value payload
+  * @param inputType Daml-LF type of the encoded input
+  * @param outputType Daml-LF type expected for the response
+  * @param valueSerializationVersion LF value serialization version used for input/output bytes
   * @param resume Callback to provide the result or error
   */
 final case class ResultNeedExternalCall[A](
@@ -232,6 +272,9 @@ final case class ResultNeedExternalCall[A](
     functionId: String,
     configHash: String,
     input: String,
+    inputType: String,
+    outputType: String,
+    valueSerializationVersion: SerializationVersion,
     resume: Either[ExternalCallError, String] => Result[A],
 ) extends Result[A]
 
@@ -342,12 +385,24 @@ object Result {
                     Result.sequence(results_).map(otherResults => (okResults :+ x) :++ otherResults)
                   ),
               )
-            case ResultNeedExternalCall(extId, funcId, configHash, input, resume) =>
+            case ResultNeedExternalCall(
+                  extId,
+                  funcId,
+                  configHash,
+                  input,
+                  inputType,
+                  outputType,
+                  valueSerializationVersion,
+                  resume,
+                ) =>
               ResultNeedExternalCall(
                 extId,
                 funcId,
                 configHash,
                 input,
+                inputType,
+                outputType,
+                valueSerializationVersion,
                 result =>
                   resume(result).flatMap(x =>
                     Result.sequence(results_).map(otherResults => (okResults :+ x) :++ otherResults)

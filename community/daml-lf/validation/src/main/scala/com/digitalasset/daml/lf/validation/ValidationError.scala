@@ -74,6 +74,12 @@ case object SRKey extends SerializabilityRequirement {
 case object SRDataType extends SerializabilityRequirement {
   def pretty: String = "serializable data type"
 }
+case object SRExternalCallInput extends SerializabilityRequirement {
+  def pretty: String = "external call input"
+}
+case object SRExternalCallOutput extends SerializabilityRequirement {
+  def pretty: String = "external call output"
+}
 
 // Reason why a type is not serializable.
 sealed abstract class UnserializabilityReason extends Product with Serializable {

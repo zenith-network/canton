@@ -369,6 +369,9 @@ private[lf] object Speedy {
         functionId: String,
         configHash: String,
         input: String,
+        inputType: String,
+        outputType: String,
+        valueSerializationVersion: SerializationVersion,
     )(
         continue: Either[Question.Update.ExternalCallError, String] => Control[Question.Update]
     ): Control.Question[Question.Update] =
@@ -378,6 +381,9 @@ private[lf] object Speedy {
           functionId = functionId,
           configHash = configHash,
           input = input,
+          inputType = inputType,
+          outputType = outputType,
+          valueSerializationVersion = valueSerializationVersion,
           callback = result =>
             safelyContinue(
               NameOf.qualifiedNameOfCurrentFunc,

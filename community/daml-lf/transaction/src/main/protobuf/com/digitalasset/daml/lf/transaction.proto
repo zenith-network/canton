@@ -130,4 +130,5 @@ message ExternalCallResult {
   bytes config = 3; // Extension configuration (binary)
   bytes input = 4; // Input data sent to the extension (binary)
   bytes output = 5; // Output data returned by the extension (binary)
+  string value_serialization_version = 6; // LF value serialization version used for input/output bytes
 }

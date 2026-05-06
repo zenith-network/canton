@@ -19,6 +19,9 @@ final case class ExternalCallRequest(
     functionId: String,
     config: Array[Byte],
     input: Array[Byte],
+    inputType: String,
+    outputType: String,
+    valueSerializationVersion: String,
     mode: String, // "submission" or "validation"
     participantId: Option[String],
     requestId: Option[String],
@@ -128,11 +131,7 @@ class MockExternalCallServer(
   private class MockHandler extends HttpHandler {
     override def handle(exchange: HttpExchange): Unit =
       Try {
-        // Canton sends all external calls to /api/v1/external-call with metadata in headers:
-        //   X-Daml-External-Function-Id: the function identifier
-        //   X-Daml-External-Config-Hash: the config hash
-        //   X-Daml-External-Mode: "submission" or "validation"
-        //   Body: hex-encoded input as text
+        // Canton sends external calls to /api/v1/external-call using a versioned JSON envelope.
 
         // Extract headers
         val headers = exchange.getRequestHeaders
@@ -148,8 +147,21 @@ class MockExternalCallServer(
 
             // Read request body
             val inputStream = exchange.getRequestBody
-            val input = inputStream.readAllBytes()
+            val rawBody = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8)
             inputStream.close()
+
+            val envelope = ujson.read(rawBody).obj
+            val protocolVersion = envelope("protocolVersion").num.toInt
+            if (protocolVersion != 1) {
+              sendResponse(exchange, 400, s"Unsupported protocolVersion: $protocolVersion")
+              return
+            }
+
+            val inputHex = envelope("inputHex").str
+            val configHex = envelope("configHex").str
+            val inputType = envelope("inputType").str
+            val outputType = envelope("outputType").str
+            val valueSerializationVersion = envelope("valueSerializationVersion").str
 
             val mode = Option(headers.getFirst("X-Daml-External-Mode")).getOrElse("submission")
             val participantId = Option(headers.getFirst("X-Participant-Id"))
@@ -157,13 +169,16 @@ class MockExternalCallServer(
 
             // Config hash from header
             val config =
-              configHashOpt.map(_.getBytes(StandardCharsets.UTF_8)).getOrElse(Array.emptyByteArray)
+              configHashOpt.getOrElse(configHex).getBytes(StandardCharsets.UTF_8)
 
             val request = ExternalCallRequest(
               extensionId = extensionId,
               functionId = functionId,
               config = config,
-              input = input,
+              input = inputHex.getBytes(StandardCharsets.UTF_8),
+              inputType = inputType,
+              outputType = outputType,
+              valueSerializationVersion = valueSerializationVersion,
               mode = mode,
               participantId = participantId,
               requestId = requestId,
@@ -188,7 +203,11 @@ class MockExternalCallServer(
                 response.headers.foreach { case (k, v) =>
                   exchange.getResponseHeaders.add(k, v)
                 }
-                sendResponse(exchange, response.statusCode, response.body)
+                if (response.statusCode == 200) {
+                  sendJsonSuccess(exchange, new String(response.body, StandardCharsets.UTF_8))
+                } else {
+                  sendResponse(exchange, response.statusCode, response.body)
+                }
 
               case None =>
                 logger.warn(s"No handler for function: $functionId")
@@ -210,6 +229,14 @@ class MockExternalCallServer(
       val os = exchange.getResponseBody
       os.write(body)
       os.close()
+    }
+
+    private def sendJsonSuccess(exchange: HttpExchange, outputHex: String): Unit = {
+      val body = ujson
+        .write(ujson.Obj("protocolVersion" -> 1, "outputHex" -> outputHex))
+        .getBytes(StandardCharsets.UTF_8)
+      exchange.getResponseHeaders.add("Content-Type", "application/json")
+      sendResponse(exchange, 200, body)
     }
   }
 }

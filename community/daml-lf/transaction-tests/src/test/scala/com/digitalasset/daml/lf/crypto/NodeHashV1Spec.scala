@@ -529,6 +529,7 @@ class NodeHashV1Spec extends AnyWordSpec with Matchers with HashUtils {
                 config = Bytes.assertFromString("0a0b"),
                 input = Bytes.assertFromString("c0ff"),
                 output = Bytes.assertFromString("beef"),
+                valueSerializationVersion = SerializationVersion.V2,
               )
             )
           )

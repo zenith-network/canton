@@ -82,7 +82,7 @@ class ExternalCallEngineTest
     data.Bytes
       .fromByteString(
         ValueCoder
-          .encodeValue(SerializationVersion.VDev, value)
+          .encodeValue(SerializationVersion.V2, value)
           .fold(err => fail(s"failed to encode test value: $err"), identity)
       )
       .toHexString
@@ -95,11 +95,23 @@ class ExternalCallEngineTest
       val result = submit(newEngine())
 
       inside(result) {
-        case ResultNeedExternalCall(extensionId, functionId, configHash, input, resume) =>
+        case ResultNeedExternalCall(
+              extensionId,
+              functionId,
+              configHash,
+              input,
+              inputType,
+              outputType,
+              valueSerializationVersion,
+              resume,
+            ) =>
           extensionId shouldBe "ext"
           functionId shouldBe "fun"
           configHash shouldBe "0a0b"
           input shouldBe encodedHello
+          inputType shouldBe "Text"
+          outputType shouldBe "Text"
+          valueSerializationVersion shouldBe SerializationVersion.V2
 
           inside(resume(Right(encodedWorld)).consume()) { case Right((tx, _)) =>
             val exerciseNodes = tx.nodes.collect { case (_, exercise: Node.Exercise) => exercise }
@@ -111,6 +123,7 @@ class ExternalCallEngineTest
                 config = data.Bytes.assertFromString("0a0b"),
                 input = data.Bytes.assertFromString(encodedHello),
                 output = data.Bytes.assertFromString(encodedWorld),
+                valueSerializationVersion = SerializationVersion.V2,
               )
             )
           }
@@ -121,16 +134,25 @@ class ExternalCallEngineTest
       val result = submit(newEngine())
 
       inside(result) {
-        case ResultNeedExternalCall(_, _, _, _, resume) =>
+        case ResultNeedExternalCall(_, _, _, _, _, _, _, resume) =>
           inside(
             resume(Left(ExternalCallError(503, "upstream unavailable", Some("req-123")))).consume()
           ) {
-            case Left(err @ Error.Interpretation(Error.Interpretation.DamlException(_), _)) =>
-              err.message should include("External call failed: upstream unavailable")
-              err.message should include("status=503")
-              err.message should include("requestId=req-123")
-              err.message should include("extensionId=ext")
-              err.message should include("functionId=fun")
+            case Left(
+                  Error.Interpretation(
+                    Error.Interpretation.DamlException(
+                      interpretation.Error.ExternalCall(
+                        error: interpretation.Error.ExternalCall.Execution
+                      )
+                    ),
+                    _,
+                  )
+                ) =>
+              error.message should include("upstream unavailable")
+              error.statusCode shouldBe 503
+              error.requestId shouldBe Some("req-123")
+              error.extensionId shouldBe "ext"
+              error.functionId shouldBe "fun"
           }
       }
     }
@@ -163,7 +185,8 @@ class ExternalCallEngineTest
         )
       )
 
-      inside(enoughGas) { case ResultNeedExternalCall("ext", "fun", "0a0b", `encodedHello`, _) =>
+      inside(enoughGas) {
+        case ResultNeedExternalCall("ext", "fun", "0a0b", `encodedHello`, _, _, _, _) =>
         succeed
       }
     }

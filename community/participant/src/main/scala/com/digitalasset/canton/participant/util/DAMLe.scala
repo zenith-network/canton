@@ -35,6 +35,7 @@ import com.digitalasset.daml.lf.transaction.{
   FatContractInstance,
   NeedKeyProgression,
   NextGenContractStateMachine as ContractStateMachine,
+  SerializationVersion,
 }
 import com.digitalasset.daml.lf.value.ContractIdVersion
 
@@ -122,7 +123,8 @@ object DAMLe {
     * index), value is (config, input, output) as data.Bytes. The index is derived from the position
     * in the externalCallResults list.
     */
-  type StoredExternalCallResults = Map[(String, String, Int), (LfBytes, LfBytes, LfBytes)]
+  type StoredExternalCallResults =
+    Map[(String, String, Int), (LfBytes, LfBytes, LfBytes, SerializationVersion)]
 
   object StoredExternalCallResults {
     val empty: StoredExternalCallResults = Map.empty
@@ -130,7 +132,7 @@ object DAMLe {
     def fromResults(results: ImmArray[ExternalCallResult]): StoredExternalCallResults =
       results.toSeq.zipWithIndex.map { case (result, index) =>
         (result.extensionId, result.functionId, index) ->
-          (result.config, result.input, result.output)
+          (result.config, result.input, result.output, result.valueSerializationVersion)
       }.toMap
   }
 
@@ -423,7 +425,16 @@ class DAMLe(
         case ResultPrefetch(_, _, resume) =>
           // we do not need to prefetch here as Canton includes the keys as a static map in Phase 3
           handleResultInternal(resume())
-        case ResultNeedExternalCall(extensionId, functionId, configHash, input, resume) =>
+        case ResultNeedExternalCall(
+              extensionId,
+              functionId,
+              configHash,
+              input,
+              inputType,
+              outputType,
+              valueSerializationVersion,
+              resume,
+            ) =>
           val currentCallIndex = externalCallCounter.getAndIncrement()
           (isConfirmer, externalCallHandler) match {
             case (true, Some(handler)) =>
@@ -438,6 +449,9 @@ class DAMLe(
                   input,
                   "validation",
                   "validation",
+                  inputType,
+                  outputType,
+                  SerializationVersion.toProtoValue(valueSerializationVersion),
                 )
                 .flatMap {
                   case Right(output) =>
@@ -492,10 +506,20 @@ class DAMLe(
             case _ =>
               val resultToReplay = storedExternalCallResults
                 .get((extensionId, functionId, currentCallIndex))
-                .map { case (storedConfig, _, output) =>
+                .map { case (storedConfig, storedInput, output, storedSerializationVersion) =>
                   if (storedConfig.toHexString != configHash) {
                     logger.warn(
                       s"Config mismatch for external call replay: expected=${storedConfig.toHexString}, got=$configHash"
+                    )
+                  }
+                  if (storedInput.toHexString != input) {
+                    logger.warn(
+                      s"Input mismatch for external call replay: expected=${storedInput.toHexString}, got=$input"
+                    )
+                  }
+                  if (storedSerializationVersion != valueSerializationVersion) {
+                    logger.warn(
+                      s"Serialization version mismatch for external call replay: expected=$storedSerializationVersion, got=$valueSerializationVersion"
                     )
                   }
                   output.toHexString

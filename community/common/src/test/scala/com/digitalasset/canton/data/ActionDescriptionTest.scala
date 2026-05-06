@@ -8,7 +8,7 @@ import com.digitalasset.canton.protocol.*
 import com.digitalasset.canton.util.LfTransactionBuilder.{defaultPackageId, defaultTemplateId}
 import com.digitalasset.canton.{BaseTest, LfPartyId}
 import com.digitalasset.daml.lf.data.{Bytes, ImmArray, Ref}
-import com.digitalasset.daml.lf.transaction.ExternalCallResult
+import com.digitalasset.daml.lf.transaction.{ExternalCallResult, SerializationVersion}
 import org.scalatest.wordspec.AnyWordSpec
 
 class ActionDescriptionTest extends AnyWordSpec with BaseTest {
@@ -58,6 +58,7 @@ class ActionDescriptionTest extends AnyWordSpec with BaseTest {
             config = Bytes.fromStringUtf8("config"),
             input = Bytes.fromStringUtf8("input"),
             output = Bytes.fromStringUtf8("output"),
+            valueSerializationVersion = SerializationVersion.V2,
           )
         )
         val node = ExampleTransactionFactory

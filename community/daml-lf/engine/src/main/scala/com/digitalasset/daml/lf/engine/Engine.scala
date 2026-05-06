@@ -774,12 +774,24 @@ class Engine(
                   )
               }
 
-            case Question.Update.NeedExternalCall(extensionId, functionId, configHash, input, callback) =>
+            case Question.Update.NeedExternalCall(
+                  extensionId,
+                  functionId,
+                  configHash,
+                  input,
+                  inputType,
+                  outputType,
+                  valueSerializationVersion,
+                  callback,
+                ) =>
               ResultNeedExternalCall(
                 extensionId,
                 functionId,
                 configHash,
                 input,
+                inputType,
+                outputType,
+                valueSerializationVersion,
                 { (result: Either[ExternalCallError, String]) =>
                   val speedyResult = result.left.map(e =>
                     Question.Update.ExternalCallError(e.statusCode, e.message, e.requestId)

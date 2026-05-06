@@ -39,6 +39,7 @@ import com.digitalasset.daml.lf.transaction.{
   NeedKeyProgression,
   NextGenContractStateMachine,
   Node,
+  SerializationVersion,
   SubmittedTransaction,
   Transaction,
 }
@@ -472,7 +473,16 @@ final class StoreBackedCommandInterpreter(
             .outcomeF(loadContractsF)
             .flatMap(_ => resolveStep(resume()))
 
-        case ResultNeedExternalCall(extensionId, functionId, configHash, input, resume) =>
+        case ResultNeedExternalCall(
+              extensionId,
+              functionId,
+              configHash,
+              input,
+              inputType,
+              outputType,
+              valueSerializationVersion,
+              resume,
+            ) =>
           externalCallHandler
             .handleExternalCall(
               extensionId,
@@ -481,6 +491,9 @@ final class StoreBackedCommandInterpreter(
               input,
               "submission",
               externalCallSubmissionId,
+              inputType,
+              outputType,
+              SerializationVersion.toProtoValue(valueSerializationVersion),
             )
             .flatMap { result =>
               resolveStep(

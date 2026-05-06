@@ -68,6 +68,12 @@ trait ExtensionServiceClient {
     *   Execution mode ("submission" or "validation")
     * @param commandId
     *   Command ID from the submitting client (for binding signatures to submissions)
+    * @param inputType
+    *   Daml-LF type of the encoded input
+    * @param outputType
+    *   Daml-LF type expected for the response
+    * @param valueSerializationVersion
+    *   LF value serialization version used for input/output bytes
     * @return
     *   Either an error or the response body (hex)
     */
@@ -77,6 +83,9 @@ trait ExtensionServiceClient {
       input: String,
       mode: String,
       commandId: String,
+      inputType: String = "",
+      outputType: String = "",
+      valueSerializationVersion: String = "2",
   )(implicit tc: TraceContext): FutureUnlessShutdown[Either[ExtensionCallError, String]]
 
   /** Get the declared config hash for a function, if declared.

@@ -644,6 +644,7 @@ private[speedy] case class PartialTransaction(
       configHash: String,
       inputHex: String,
       outputHex: String,
+      valueSerializationVersion: SerializationVersion,
   ): Option[PartialTransaction] = {
     findEnclosingExercise(context.info) match {
       case Some(ec) =>
@@ -655,6 +656,7 @@ private[speedy] case class PartialTransaction(
           config = data.Bytes.assertFromString(configHash),
           input = data.Bytes.assertFromString(inputHex),
           output = data.Bytes.assertFromString(outputHex),
+          valueSerializationVersion = valueSerializationVersion,
         )
         val updated = existing :+ result
         Some(copy(externalCallResults = externalCallResults.updated(nodeId, updated)))

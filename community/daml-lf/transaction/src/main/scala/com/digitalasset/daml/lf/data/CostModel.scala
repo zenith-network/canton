@@ -445,6 +445,7 @@ private[lf] object CostModel {
         costOfString(value.functionId) +
         costOfBytes(value.config) +
         costOfBytes(value.input) +
-        costOfBytes(value.output)
+        costOfBytes(value.output) +
+        costOfSerializationVersion(value.valueSerializationVersion)
   }
 }

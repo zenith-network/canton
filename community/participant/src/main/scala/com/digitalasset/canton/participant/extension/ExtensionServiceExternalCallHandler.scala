@@ -27,9 +27,22 @@ class ExtensionServiceExternalCallHandler(
       input: String,
       mode: String,
       commandId: String,
+      inputType: String = "",
+      outputType: String = "",
+      valueSerializationVersion: String = "2",
   )(implicit tc: TraceContext): FutureUnlessShutdown[Either[ExternalCallError, String]] =
     extensionServiceManager
-      .handleExternalCall(extensionId, functionId, configHash, input, mode, commandId)
+      .handleExternalCall(
+        extensionId,
+        functionId,
+        configHash,
+        input,
+        mode,
+        commandId,
+        inputType,
+        outputType,
+        valueSerializationVersion,
+      )
       .map(_.left.map { extensionError =>
         ExternalCallError(
           statusCode = extensionError.statusCode,

@@ -52,6 +52,10 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
           controllers Cons @Party [M:T {party} this] (Nil @Party)
           to EXTERNAL_CALL @Text @Text "ext" "fun" "zzzz" "hello";
 
+        choice CallUppercaseConfig (self) (arg: Unit) : Text,
+          controllers Cons @Party [M:T {party} this] (Nil @Party)
+          to EXTERNAL_CALL @Text @Text "ext" "fun" "0A0B" "hello";
+
         choice CallInTry (self) (arg: Unit) : Text,
           controllers Cons @Party [M:T {party} this] (Nil @Party)
           to try @Text
@@ -75,6 +79,10 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
         ubind cid: ContractId M:T <- create @M:T M:T { party = party }
         in exercise @M:T CallBadConfig cid ();
 
+      val runUppercaseConfig : Party -> Update Text = \(party: Party) ->
+        ubind cid: ContractId M:T <- create @M:T M:T { party = party }
+        in exercise @M:T CallUppercaseConfig cid ();
+
       val runInTry : Party -> Update Text = \(party: Party) ->
         ubind cid: ContractId M:T <- create @M:T M:T { party = party }
         in exercise @M:T CallInTry cid ();
@@ -92,7 +100,7 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
     Bytes
       .fromByteString(
         ValueCoder
-          .encodeValue(SerializationVersion.VDev, value)
+          .encodeValue(SerializationVersion.V2, value)
           .fold(err => fail(s"failed to encode test value: $err"), identity)
       )
       .toHexString
@@ -114,12 +122,24 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       var questions = 0
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
-          case Question.Update.NeedExternalCall(extensionId, functionId, configHash, input, callback) =>
+          case Question.Update.NeedExternalCall(
+                extensionId,
+                functionId,
+                configHash,
+                input,
+                inputType,
+                outputType,
+                valueSerializationVersion,
+                callback,
+              ) =>
             questions += 1
             extensionId shouldBe "ext"
             functionId shouldBe "fun"
             configHash shouldBe "0a0b"
             input shouldBe encodedHello
+            inputType shouldBe "Text"
+            outputType shouldBe "Text"
+            valueSerializationVersion shouldBe SerializationVersion.V2
             callback(Right(encodedWorld))
           case other =>
             fail(s"Unexpected question: $other")
@@ -140,6 +160,7 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
             config = Bytes.assertFromString("0a0b"),
             input = Bytes.assertFromString(encodedHello),
             output = Bytes.assertFromString(encodedWorld),
+            valueSerializationVersion = SerializationVersion.V2,
           )
         )
       }
@@ -157,12 +178,22 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       var questions = 0
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
-          case Question.Update.NeedExternalCall(extensionId, functionId, configHash, input, callback) =>
+          case Question.Update.NeedExternalCall(
+                extensionId,
+                functionId,
+                configHash,
+                input,
+                _,
+                _,
+                valueSerializationVersion,
+                callback,
+              ) =>
             questions += 1
             extensionId shouldBe "ext"
             functionId shouldBe "fun"
             configHash shouldBe "0a0b"
             input shouldBe encodedHello
+            valueSerializationVersion shouldBe SerializationVersion.V2
             callback(Right(encodedWorld))
           case other =>
             fail(s"Unexpected question: $other")
@@ -183,6 +214,7 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
             config = Bytes.assertFromString("0a0b"),
             input = Bytes.assertFromString(encodedHello),
             output = Bytes.assertFromString(encodedWorld),
+            valueSerializationVersion = SerializationVersion.V2,
           )
         )
       }
@@ -200,12 +232,22 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       var questions = 0
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
-          case Question.Update.NeedExternalCall(extensionId, functionId, configHash, input, callback) =>
+          case Question.Update.NeedExternalCall(
+                extensionId,
+                functionId,
+                configHash,
+                input,
+                _,
+                _,
+                valueSerializationVersion,
+                callback,
+              ) =>
             questions += 1
             extensionId shouldBe "ext"
             functionId shouldBe "fun"
             configHash shouldBe "0a0b"
             input shouldBe encodedHello
+            valueSerializationVersion shouldBe SerializationVersion.V2
             callback(Right(encodedWorld))
           case other =>
             fail(s"Unexpected question: $other")
@@ -226,6 +268,7 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
             config = Bytes.assertFromString("0a0b"),
             input = Bytes.assertFromString(encodedHello),
             output = Bytes.assertFromString(encodedWorld),
+            valueSerializationVersion = SerializationVersion.V2,
           )
         )
       }
@@ -242,7 +285,7 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
 
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
-          case Question.Update.NeedExternalCall(_, _, _, _, callback) =>
+          case Question.Update.NeedExternalCall(_, _, _, _, _, _, _, callback) =>
             callback(Right("hello"))
           case other =>
             fail(s"Unexpected question: $other")
@@ -250,8 +293,13 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
         machine,
       )
 
-      inside(result) { case Left(SError.SErrorDamlException(IE.UserError(message))) =>
-        message should include("Invalid hex encoding in external call output")
+      inside(result) {
+        case Left(
+              SError.SErrorDamlException(
+                IE.ExternalCall(IE.ExternalCall.InvalidOutput(message))
+              )
+            ) =>
+          message should include("invalid output hex")
       }
     }
 
@@ -266,7 +314,7 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
 
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
-          case Question.Update.NeedExternalCall(_, _, _, _, callback) =>
+          case Question.Update.NeedExternalCall(_, _, _, _, _, _, _, callback) =>
             callback(Right(encodedInt64))
           case other =>
             fail(s"Unexpected question: $other")
@@ -274,8 +322,13 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
         machine,
       )
 
-      inside(result) { case Left(SError.SErrorDamlException(IE.UserError(message))) =>
-        message should include("external call output does not match expected type")
+      inside(result) {
+        case Left(
+              SError.SErrorDamlException(
+                IE.ExternalCall(IE.ExternalCall.OutputTypeMismatch(_, message))
+              )
+            ) =>
+          message should include("mismatching type")
       }
     }
 
@@ -291,7 +344,7 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       var questions = 0
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
-          case Question.Update.NeedExternalCall(_, _, _, _, callback) =>
+          case Question.Update.NeedExternalCall(_, _, _, _, _, _, _, callback) =>
             questions += 1
             callback(Right(encodedWorld))
           case other =>
@@ -301,8 +354,41 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       )
 
       questions shouldBe 0
-      inside(result) { case Left(SError.SErrorDamlException(IE.UserError(message))) =>
-        message should include("Invalid hex encoding in config")
+      inside(result) {
+        case Left(
+              SError.SErrorDamlException(IE.ExternalCall(IE.ExternalCall.Preparation(message)))
+            ) =>
+          message should include("invalid config hex")
+      }
+    }
+
+    "reject uppercase config hex before issuing NeedExternalCall" in {
+      val machine = Speedy.Machine.fromUpdateSExpr(
+        pkgs,
+        transactionSeed,
+        SEApp(pkgs.compiler.unsafeCompile(e"M:runUppercaseConfig"), ArraySeq(SParty(alice))),
+        Set(alice),
+        MachineLogger(),
+      )
+
+      var questions = 0
+      val result = SpeedyTestLib.runTxQ[Question.Update](
+        {
+          case Question.Update.NeedExternalCall(_, _, _, _, _, _, _, callback) =>
+            questions += 1
+            callback(Right(encodedWorld))
+          case other =>
+            fail(s"Unexpected question: $other")
+        },
+        machine,
+      )
+
+      questions shouldBe 0
+      inside(result) {
+        case Left(
+              SError.SErrorDamlException(IE.ExternalCall(IE.ExternalCall.Preparation(message)))
+            ) =>
+          message should include("invalid config hex")
       }
     }
 
@@ -317,7 +403,7 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
 
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
-          case Question.Update.NeedExternalCall(_, _, _, _, callback) =>
+          case Question.Update.NeedExternalCall(_, _, _, _, _, _, _, callback) =>
             callback(Left(Question.Update.ExternalCallError(503, "upstream unavailable", Some("req-123"))))
           case other =>
             fail(s"Unexpected question: $other")
@@ -325,12 +411,17 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
         machine,
       )
 
-      inside(result) { case Left(SError.SErrorDamlException(IE.UserError(message))) =>
-        message should include("External call failed: upstream unavailable")
-        message should include("status=503")
-        message should include("requestId=req-123")
-        message should include("extensionId=ext")
-        message should include("functionId=fun")
+      inside(result) {
+        case Left(
+              SError.SErrorDamlException(
+                IE.ExternalCall(error: IE.ExternalCall.Execution)
+              )
+            ) =>
+          error.message should include("upstream unavailable")
+          error.statusCode shouldBe 503
+          error.requestId shouldBe Some("req-123")
+          error.extensionId shouldBe "ext"
+          error.functionId shouldBe "fun"
       }
       machine.ptx.externalCallResults shouldBe empty
     }
@@ -346,7 +437,7 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
 
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
-          case Question.Update.NeedExternalCall(_, _, _, _, callback) =>
+          case Question.Update.NeedExternalCall(_, _, _, _, _, _, _, callback) =>
             callback(Left(Question.Update.ExternalCallError(503, "upstream unavailable", Some("req-456"))))
           case other =>
             fail(s"Unexpected question: $other")
@@ -354,10 +445,15 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
         machine,
       )
 
-      inside(result) { case Left(SError.SErrorDamlException(IE.UserError(message))) =>
-        message should include("External call failed: upstream unavailable")
-        message should include("status=503")
-        message should include("requestId=req-456")
+      inside(result) {
+        case Left(
+              SError.SErrorDamlException(
+                IE.ExternalCall(error: IE.ExternalCall.Execution)
+              )
+            ) =>
+          error.message should include("upstream unavailable")
+          error.statusCode shouldBe 503
+          error.requestId shouldBe Some("req-456")
       }
       machine.ptx.externalCallResults shouldBe empty
     }
@@ -374,7 +470,7 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       var questions = 0
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
-          case Question.Update.NeedExternalCall(_, _, _, _, callback) =>
+          case Question.Update.NeedExternalCall(_, _, _, _, _, _, _, callback) =>
             questions += 1
             callback(Right(encodedWorld))
           case other =>
@@ -384,8 +480,11 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       )
 
       questions shouldBe 0
-      inside(result) { case Left(SError.SErrorDamlException(IE.UserError(message))) =>
-        message should include("External calls are only supported within exercise context")
+      inside(result) {
+        case Left(
+              SError.SErrorDamlException(IE.ExternalCall(IE.ExternalCall.Preparation(message)))
+            ) =>
+          message should include("external calls are only supported within exercise context")
       }
     }
   }

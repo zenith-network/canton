@@ -4,6 +4,7 @@
 package com.digitalasset.daml.lf
 package engine
 
+import com.digitalasset.daml.lf.transaction.SerializationVersion
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
@@ -17,6 +18,9 @@ class ResultSpec extends AnyWordSpec with Matchers {
           functionId = "fun",
           configHash = "0a0b",
           input = "c0ff",
+          inputType = "Text",
+          outputType = "Text",
+          valueSerializationVersion = SerializationVersion.V2,
           resume = {
             case Right(output) => ResultDone(output)
             case Left(error) => ResultDone(s"unexpected-error:${error.message}")
@@ -34,6 +38,9 @@ class ResultSpec extends AnyWordSpec with Matchers {
           functionId = "fun",
           configHash = "0a0b",
           input = "c0ff",
+          inputType = "Text",
+          outputType = "Text",
+          valueSerializationVersion = SerializationVersion.V2,
           resume = {
             case Right(output) => ResultDone(s"unexpected-output:$output")
             case Left(error) => ResultDone(s"error:${error.statusCode}:${error.message}")

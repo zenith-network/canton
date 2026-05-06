@@ -880,6 +880,7 @@ private object TransactionCoderSpec {
       config = data.Bytes.fromByteArray(Array[Byte](1, 2, 3)),
       input = data.Bytes.fromByteArray(Array[Byte](4, 5, 6)),
       output = data.Bytes.fromByteArray(Array[Byte](7, 8, 9)),
+      valueSerializationVersion = SerializationVersion.V2,
     )
 
   private def normalizeKey(

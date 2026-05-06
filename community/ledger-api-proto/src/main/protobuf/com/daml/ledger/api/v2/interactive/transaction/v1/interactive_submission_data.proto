@@ -48,6 +48,7 @@ message ExternalCallResult {
   bytes config = 3; // Extension configuration bytes for version validation
   bytes input = 4; // Input data sent to the extension
   bytes output = 5; // Output data returned by the extension
+  string value_serialization_version = 6; // LF value serialization version used for input/output bytes
 }
 
 // Exercise node

@@ -191,6 +191,7 @@ message ActionDescription {
     bytes config = 3; // Extension configuration
     bytes input = 4; // Input data sent to the extension
     bytes output = 5; // Output data returned by the extension
+    string value_serialization_version = 6; // LF value serialization version used for input/output bytes
   }
 
   message FetchActionDescription {

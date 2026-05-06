@@ -354,6 +354,7 @@ object ValueGenerators {
       config = config,
       input = input,
       output = output,
+      valueSerializationVersion = SerializationVersion.V2,
     )
 
   /** Generates a list of ExternalCallResults for exercise nodes. */

@@ -8,6 +8,7 @@ import com.digitalasset.canton.data.ActionDescription.ExerciseActionDescription
 import com.digitalasset.canton.data.ViewPosition
 import com.digitalasset.canton.logging.pretty.{Pretty, PrettyPrinting}
 import com.digitalasset.daml.lf.data.Bytes as LfBytes
+import com.digitalasset.daml.lf.transaction.SerializationVersion
 
 /** Checks consistency of external call results across a transaction on a per-party basis.
   *
@@ -34,12 +35,14 @@ object ExternalCallConsistencyChecker {
       functionId: String,
       config: LfBytes,
       input: LfBytes,
+      valueSerializationVersion: SerializationVersion,
   ) extends PrettyPrinting {
     override protected def pretty: Pretty[ExternalCallKey] = prettyOfClass(
       param("extensionId", _.extensionId.unquoted),
       param("functionId", _.functionId.unquoted),
       param("config", _.config.toHexString.unquoted),
       param("input", _.input.toHexString.unquoted),
+      param("valueSerializationVersion", _.valueSerializationVersion.pretty.unquoted),
     )
   }
 
@@ -155,6 +158,7 @@ class ExternalCallConsistencyChecker {
                 functionId = result.functionId,
                 config = result.config,
                 input = result.input,
+                valueSerializationVersion = result.valueSerializationVersion,
               ),
               output = result.output,
               viewPosition = viewPosition,

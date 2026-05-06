@@ -144,6 +144,21 @@ private[lf] object Pretty {
         text(s"Text is malformed: $err")
       case FailureStatus(errorId, cantonCategoryId, errorMessage, _) =>
         text(s"User failure: $errorId (error category $cantonCategoryId): $errorMessage")
+      case ExternalCall(error) =>
+        error match {
+          case ExternalCall.Preparation(message) =>
+            text(s"External call preparation failed: $message")
+          case ExternalCall.Execution(statusCode, message, requestId, extensionId, functionId) =>
+            text(
+              s"External call execution failed: $message (status=$statusCode, extensionId=$extensionId, functionId=$functionId"
+            ) + text(requestId.map(id => s", requestId=$id").getOrElse("")) + text(")")
+          case ExternalCall.InvalidOutput(message) =>
+            text(s"External call returned invalid output: $message")
+          case ExternalCall.OutputTypeMismatch(expectedType, message) =>
+            text(s"External call output does not match expected type ${expectedType.pretty}: $message")
+          case ExternalCall.Internal(message) =>
+            text(s"External call internal error: $message")
+        }
       case Upgrade(error) =>
         error match {
           case Upgrade.ValidationFailed(
