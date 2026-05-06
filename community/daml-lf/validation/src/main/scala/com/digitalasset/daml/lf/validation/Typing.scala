@@ -427,6 +427,7 @@ private[validation] object Typing {
       ctx: Context,
       tVars: Map[TypeVarName, Kind] = Map.empty,
       eVars: Map[ExprVarName, Type] = Map.empty,
+      externalCallVars: Map[ExprVarName, List[SerializabilityRequirement]] = Map.empty,
       currentValue: Option[(Identifier, Type)] = None,
   ) {
 
@@ -463,10 +464,17 @@ private[validation] object Typing {
     private def introTypeVar(v: TypeVarName, k: Kind): Env =
       copy(tVars = tVars + (v -> k))
 
-    private def introExprVar(x: ExprVarName, t: Type): Env = copy(eVars = eVars + (x -> t))
+    private def introExprVar(x: ExprVarName, t: Type): Env =
+      copy(eVars = eVars + (x -> t), externalCallVars = externalCallVars - x)
 
     private def introExprVar(xOpt: Option[ExprVarName], t: Type): Env =
       xOpt.fold(this)(introExprVar(_, t))
+
+    private def introExternalCallExprVar(
+        x: ExprVarName,
+        requirements: List[SerializabilityRequirement],
+    ): Env =
+      copy(externalCallVars = externalCallVars + (x -> requirements))
 
     private def newLocation(loc: Location): Env =
       copy(ctx = Context.Location(loc))
@@ -940,24 +948,8 @@ private[validation] object Typing {
           throw EExpectedSerializableType(ctx, requirement, typExpanded, URContractId)
       }
 
-      def externalCallTypeRequirements(headType: Type): List[(SerializabilityRequirement, Type)] =
-        expandTypeSynonyms(headType) match {
-          case TForall((inputVar, KStar), TForall((outputVar, KStar), body))
-              if isExternalCallBody(
-                dropExternalCallContextArgs(body),
-                TVar(inputVar),
-                TVar(outputVar),
-              ) =>
-            List(SRExternalCallInput, SRExternalCallOutput).zip(typs)
-          case TForall((outputVar, KStar), body)
-              if isExternalCallBodyWithOutput(
-                dropExternalCallContextArgs(body),
-                TVar(outputVar),
-              ) =>
-            typs.headOption.toList.map(SRExternalCallOutput -> _)
-          case _ =>
-            Nil
-        }
+      def externalCallTypeRequirements(expr: Expr): List[(SerializabilityRequirement, Type)] =
+        externalCallRemainingTypeRequirements(expr).zip(typs)
 
       @tailrec
       def loopForall(body0: Type, typs: List[Type], acc: Map[TypeVarName, Type]): Type =
@@ -976,20 +968,35 @@ private[validation] object Typing {
 
       typeOf(expr) { ty =>
         val resultType = loopForall(ty, typs, Map.empty)
-        externalCallTypeRequirements(ty).foreach { case (requirement, typ) =>
+        externalCallTypeRequirements(expr).foreach { case (requirement, typ) =>
           checkExternalCallType(requirement, typ)
         }
         Ret(resultType)
       }
     }
 
+    private def externalCallRemainingTypeRequirements(
+        expr: Expr
+    ): List[SerializabilityRequirement] =
+      expr match {
+        case EBuiltinFun(BExternalCall) =>
+          List(SRExternalCallInput, SRExternalCallOutput)
+        case EVar(varName) =>
+          externalCallVars.getOrElse(varName, Nil)
+        case EVal(ref) if isExternalCallWrapperValue(ref) =>
+          List(SRExternalCallInput, SRExternalCallOutput)
+        case ELocation(_, body) =>
+          externalCallRemainingTypeRequirements(body)
+        case ETyAbs(_, body) =>
+          externalCallRemainingTypeRequirements(body)
+        case ETyApp(body, _) =>
+          externalCallRemainingTypeRequirements(body).drop(1)
+        case _ =>
+          Nil
+      }
+
     private def isExternalCallBody(body: Type, inputType: Type, outputType: Type): Boolean =
       body == (TText ->: TText ->: TText ->: inputType ->: TUpdate(outputType))
-
-    private def isExternalCallBodyWithOutput(body: Type, outputType: Type): Boolean = body match {
-      case TFun(TText, TFun(TText, TFun(TText, TFun(_, TUpdate(`outputType`))))) => true
-      case _ => false
-    }
 
     private def isTrustedExternalCallWrapperContext: Boolean =
       currentValue.exists { case (identifier, typ) =>
@@ -1004,6 +1011,10 @@ private[validation] object Typing {
           isExternalCallBody(dropExternalCallContextArgs(body), TVar(inputVar), TVar(outputVar))
         case _ => false
       }
+
+    private def isExternalCallWrapperValue(ref: ValueRef): Boolean =
+      ref.qualifiedName.module == Typing.daExternalModule &&
+        ref.qualifiedName.name == Typing.externalCallName
 
     @tailrec
     private def dropExternalCallContextArgs(typ: Type): Type =
@@ -1208,7 +1219,13 @@ private[validation] object Typing {
       case Binding(Some(vName), typ0, expr) =>
         checkType(typ0, KStar)
         resolveExprType(expr, typ0) { typ1 =>
-          introExprVar(vName, typ1).typeOf(body) { ty =>
+          val externalCallReqs = externalCallRemainingTypeRequirements(expr)
+          val bodyEnv =
+            if (externalCallReqs.nonEmpty)
+              introExprVar(vName, typ1).introExternalCallExprVar(vName, externalCallReqs)
+            else
+              introExprVar(vName, typ1)
+          bodyEnv.typeOf(body) { ty =>
             Ret(ty)
           }
         }

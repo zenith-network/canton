@@ -34,6 +34,7 @@ import com.digitalasset.daml.lf.crypto.Hash
 import com.digitalasset.daml.lf.data.Ref.Identifier
 import com.digitalasset.daml.lf.data.{Bytes, ImmArray, Ref, Time}
 import com.digitalasset.daml.lf.engine.*
+import com.digitalasset.daml.lf.interpretation.Error as IE
 import com.digitalasset.daml.lf.language.LanguageVersion
 import com.digitalasset.daml.lf.testing.parser.Implicits.SyntaxHelper
 import com.digitalasset.daml.lf.testing.parser.ParserParameters
@@ -96,7 +97,7 @@ class StoreBackedCommandInterpreterSpec
 
         choice Call (self) (arg: Unit) : Text,
           controllers Cons @Party [M:T {party} this] (Nil @Party)
-          to EXTERNAL_CALL "ext" "fun" "0a0b" "c0ff";
+          to EXTERNAL_CALL @Text @Text "ext" "fun" "0a0b" "hello";
       };
     }
   """
@@ -306,14 +307,28 @@ class StoreBackedCommandInterpreterSpec
           case Left(
                 ErrorCause.DamlLf(
                   engine.Error.Interpretation(
-                    engine.Error.Interpretation.Internal(_, message, _),
+                    engine.Error.Interpretation.DamlException(
+                      IE.ExternalCall(
+                        IE.ExternalCall.Execution(
+                          statusCode,
+                          message,
+                          requestId,
+                          extensionId,
+                          functionId,
+                        )
+                      )
+                    ),
                     _,
                   )
                 )
               ) =>
-            message should include("External calls are not supported")
+            statusCode shouldBe 501
+            message should include("External calls not supported")
+            requestId shouldBe None
+            extensionId shouldBe "ext"
+            functionId shouldBe "fun"
           case other =>
-            fail(s"Expected direct internal rejection, got $other")
+            fail(s"Expected direct external-call rejection, got $other")
         }
     }
   }

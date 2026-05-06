@@ -340,11 +340,24 @@ final class TypingSpec extends AnyWordSpec with TableDrivenPropertyChecks with M
         E"""λ (input: Text) → (( EXTERNAL_CALL @Text @Mod:CidBox "ext" "fun" "00" input ))""",
         E"""λ (box: Mod:PolyBox (ContractId Mod:T)) → (( EXTERNAL_CALL @(Mod:PolyBox (ContractId Mod:T)) @Text "ext" "fun" "00" box ))""",
         E"""λ (cid: ContractId Mod:T) → (( ⸨ EXTERNAL_CALL ⸩ @(ContractId Mod:T) @Text "ext" "fun" "00" cid ))""",
+        E"""λ (cid: ContractId Mod:T) →
+             (( let f : ∀ (input : ⋆) (output : ⋆). Text → Text → Text → input → Update output = EXTERNAL_CALL
+                in f @(ContractId Mod:T) @Text "ext" "fun" "00" cid ))""",
       )
 
       forEvery(testCases) { exp =>
         an[EExpectedSerializableType] shouldBe thrownBy(env.typeOfTopExpr(exp))
       }
+    }
+
+    "do not apply external call requirements to unrelated functions with the same type" in {
+      val exp =
+        E"""λ (cid: ContractId Mod:T) →
+             (( let f : ∀ (input : ⋆) (output : ⋆). Text → Text → Text → input → Update output =
+                  ERROR @(∀ (input : ⋆) (output : ⋆). Text → Text → Text → input → Update output) "unused"
+                in f @(ContractId Mod:T) @Text "ext" "fun" "00" cid ))"""
+
+      env.typeOfTopExpr(exp) shouldBe T"ContractId Mod:T → Update Text"
     }
 
     "reject polymorphic external call wrappers without a no-ContractId constraint" in {

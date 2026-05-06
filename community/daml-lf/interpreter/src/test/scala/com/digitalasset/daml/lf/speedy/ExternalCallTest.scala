@@ -6,7 +6,7 @@ package speedy
 
 import com.digitalasset.canton.logging.SuppressingLogging
 import com.digitalasset.daml.lf.data.{Bytes, ImmArray, Ref}
-import com.digitalasset.daml.lf.interpretation.{Error => IE}
+import com.digitalasset.daml.lf.interpretation.Error as IE
 import com.digitalasset.daml.lf.language.LanguageVersion
 import com.digitalasset.daml.lf.speedy.SExpr.SEApp
 import com.digitalasset.daml.lf.speedy.SValue.{SParty, SText}
@@ -34,6 +34,13 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
   private val pkgs = SpeedyTestLib.typeAndCompile(p"""
     metadata ( '-pkg-' : '1.0.0' )
 
+    module DA.External {
+      val externalCall : forall (input : *) (output : *). Text -> Text -> Text -> input -> Update output =
+        /\ (input : *) (output : *).
+          \(extensionId : Text) (functionId : Text) (configHex : Text) (inputValue : input) ->
+            EXTERNAL_CALL @input @output extensionId functionId configHex inputValue;
+    }
+
     module M {
       record @serializable T = { party: Party };
       record @serializable Boom = {};
@@ -55,6 +62,10 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
         choice CallUppercaseConfig (self) (arg: Unit) : Text,
           controllers Cons @Party [M:T {party} this] (Nil @Party)
           to EXTERNAL_CALL @Text @Text "ext" "fun" "0A0B" "hello";
+
+        choice CallViaWrapper (self) (arg: Unit) : Text,
+          controllers Cons @Party [M:T {party} this] (Nil @Party)
+          to DA.External:externalCall @Text @Text "ext" "fun" "0a0b" "hello";
 
         choice CallInTry (self) (arg: Unit) : Text,
           controllers Cons @Party [M:T {party} this] (Nil @Party)
@@ -82,6 +93,10 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       val runUppercaseConfig : Party -> Update Text = \(party: Party) ->
         ubind cid: ContractId M:T <- create @M:T M:T { party = party }
         in exercise @M:T CallUppercaseConfig cid ();
+
+      val runViaWrapper : Party -> Update Text = \(party: Party) ->
+        ubind cid: ContractId M:T <- create @M:T M:T { party = party }
+        in exercise @M:T CallViaWrapper cid ();
 
       val runInTry : Party -> Update Text = \(party: Party) ->
         ubind cid: ContractId M:T <- create @M:T M:T { party = party }
@@ -151,7 +166,9 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       questions shouldBe 1
 
       inside(machine.finish) { case Right(commit) =>
-        val exerciseNodes = commit.tx.nodes.collect { case (_, exercise: Node.Exercise) => exercise }
+        val exerciseNodes = commit.tx.nodes.collect { case (_, exercise: Node.Exercise) =>
+          exercise
+        }
         exerciseNodes should have size 1
         exerciseNodes.head.externalCallResults shouldBe ImmArray(
           ExternalCallResult(
@@ -164,6 +181,47 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
           )
         )
       }
+    }
+
+    "execute calls through the canonical DA.External.externalCall wrapper with concrete types" in {
+      val machine = Speedy.Machine.fromUpdateSExpr(
+        pkgs,
+        transactionSeed,
+        SEApp(pkgs.compiler.unsafeCompile(e"M:runViaWrapper"), ArraySeq(SParty(alice))),
+        Set(alice),
+        MachineLogger(),
+      )
+
+      var questions = 0
+      val result = SpeedyTestLib.runTxQ[Question.Update](
+        {
+          case Question.Update.NeedExternalCall(
+                extensionId,
+                functionId,
+                configHash,
+                input,
+                inputType,
+                outputType,
+                valueSerializationVersion,
+                callback,
+              ) =>
+            questions += 1
+            extensionId shouldBe "ext"
+            functionId shouldBe "fun"
+            configHash shouldBe "0a0b"
+            input shouldBe encodedHello
+            inputType shouldBe "Text"
+            outputType shouldBe "Text"
+            valueSerializationVersion shouldBe SerializationVersion.V2
+            callback(Right(encodedWorld))
+          case other =>
+            fail(s"Unexpected question: $other")
+        },
+        machine,
+      )
+
+      result shouldBe Right(SText("world"))
+      questions shouldBe 1
     }
 
     "record the result on the enclosing exercise node when called inside try/catch" in {
@@ -205,7 +263,9 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       questions shouldBe 1
 
       inside(machine.finish) { case Right(commit) =>
-        val exerciseNodes = commit.tx.nodes.collect { case (_, exercise: Node.Exercise) => exercise }
+        val exerciseNodes = commit.tx.nodes.collect { case (_, exercise: Node.Exercise) =>
+          exercise
+        }
         exerciseNodes should have size 1
         exerciseNodes.head.externalCallResults shouldBe ImmArray(
           ExternalCallResult(
@@ -259,7 +319,9 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       questions shouldBe 1
 
       inside(machine.finish) { case Right(commit) =>
-        val exerciseNodes = commit.tx.nodes.collect { case (_, exercise: Node.Exercise) => exercise }
+        val exerciseNodes = commit.tx.nodes.collect { case (_, exercise: Node.Exercise) =>
+          exercise
+        }
         exerciseNodes should have size 1
         exerciseNodes.head.externalCallResults shouldBe ImmArray(
           ExternalCallResult(
@@ -404,7 +466,9 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
           case Question.Update.NeedExternalCall(_, _, _, _, _, _, _, callback) =>
-            callback(Left(Question.Update.ExternalCallError(503, "upstream unavailable", Some("req-123"))))
+            callback(
+              Left(Question.Update.ExternalCallError(503, "upstream unavailable", Some("req-123")))
+            )
           case other =>
             fail(s"Unexpected question: $other")
         },
@@ -438,7 +502,9 @@ class ExternalCallTest extends AnyWordSpec with Matchers with Inside with Suppre
       val result = SpeedyTestLib.runTxQ[Question.Update](
         {
           case Question.Update.NeedExternalCall(_, _, _, _, _, _, _, callback) =>
-            callback(Left(Question.Update.ExternalCallError(503, "upstream unavailable", Some("req-456"))))
+            callback(
+              Left(Question.Update.ExternalCallError(503, "upstream unavailable", Some("req-456")))
+            )
           case other =>
             fail(s"Unexpected question: $other")
         },
