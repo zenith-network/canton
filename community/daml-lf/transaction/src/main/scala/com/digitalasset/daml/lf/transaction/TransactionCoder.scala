@@ -579,17 +579,22 @@ class TransactionCoder(allowNullCharacters: Boolean) {
 
     private[this] def decodeExternalCallResult(
         proto: TransactionOuterClass.ExternalCallResult
-    ): ExternalCallResult =
-      ExternalCallResult(
+    ): Either[DecodeError, ExternalCallResult] =
+      for {
+        valueSerializationVersion <-
+          if (proto.getValueSerializationVersion.isEmpty) Right(SerializationVersion.V2)
+          else
+            SerializationVersion
+              .fromString(proto.getValueSerializationVersion)
+              .left
+              .map(DecodeError(_))
+      } yield ExternalCallResult(
         extensionId = proto.getExtensionId,
         functionId = proto.getFunctionId,
         config = data.Bytes.fromByteString(proto.getConfig),
         input = data.Bytes.fromByteString(proto.getInput),
         output = data.Bytes.fromByteString(proto.getOutput),
-        valueSerializationVersion =
-          SerializationVersion
-            .fromString(proto.getValueSerializationVersion)
-            .getOrElse(SerializationVersion.V2),
+        valueSerializationVersion = valueSerializationVersion,
       )
 
     private[this] def decodeExercise(
@@ -628,11 +633,15 @@ class TransactionCoder(allowNullCharacters: Boolean) {
               )
             )
           else
-            Right(
-              ImmArray.from(
-                msg.getExternalCallResultsList.asScala.map(decodeExternalCallResult)
-              )
-            )
+            msg.getExternalCallResultsList.asScala.toVector
+              .foldLeft[Either[DecodeError, Vector[ExternalCallResult]]](Right(Vector.empty)) {
+                case (acc, proto) =>
+                  for {
+                    results <- acc
+                    result <- decodeExternalCallResult(proto)
+                  } yield results :+ result
+              }
+              .map(ImmArray.from)
       } yield Node.Exercise(
         targetCoid = fetch.coid,
         packageName = fetch.packageName,

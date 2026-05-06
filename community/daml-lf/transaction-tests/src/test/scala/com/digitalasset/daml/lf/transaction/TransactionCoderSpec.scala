@@ -707,6 +707,48 @@ final class TransactionCoderSpec
         )
       }
     }
+
+    "reject exercise nodes with invalid external call value serialization versions" in {
+      forAll(danglingRefExerciseNodeGen) { exerciseNode =>
+        val result = externalCallResult()
+        val nodeWithoutExternalCallResults = normalizeExe(exerciseNode).copy(
+          version = SerializationVersion.VDev,
+          externalCallResults = ImmArray.Empty,
+        )
+
+        val Right(encoded) = TransactionCoder.internal
+          .encodeNode(
+            enclosingVersion = SerializationVersion.VDev,
+            nodeId = NodeId(0),
+            node = nodeWithoutExternalCallResults,
+          )
+
+        val withExternalCallResultsBuilder = encoded.toBuilder
+        withExternalCallResultsBuilder
+          .getExerciseBuilder
+          .addExternalCallResults(
+            proto.ExternalCallResult
+              .newBuilder()
+              .setExtensionId("ext")
+              .setFunctionId("fn")
+              .setConfig(result.config.toByteString)
+              .setInput(result.input.toByteString)
+              .setOutput(result.output.toByteString)
+              .setValueSerializationVersion("invalid")
+              .build()
+          )
+        val withExternalCallResults = withExternalCallResultsBuilder.build()
+
+        inside(
+          TransactionCoder.internal.decodeNode(
+            SerializationVersion.VDev,
+            withExternalCallResults,
+          )
+        ) { case Left(DecodeError(errorMessage)) =>
+          errorMessage should include("Unsupported serialization version")
+        }
+      }
+    }
   }
 
   "toOrderPartySet" should {

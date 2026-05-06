@@ -228,20 +228,20 @@ final class PreparedTransactionDecoder(override val loggerFactory: NamedLoggerFa
         : PartialTransformer[isdv1.ExternalCallResult, lf.transaction.ExternalCallResult] =
       PartialTransformer { src =>
         val valueSerializationVersion =
-          if (src.valueSerializationVersion.isEmpty) LfSerializationVersion.V2
+          if (src.valueSerializationVersion.isEmpty) Result.fromValue(LfSerializationVersion.V2)
           else
             LfSerializationVersion
               .fromString(src.valueSerializationVersion)
-              .getOrElse(LfSerializationVersion.V2)
-        Result.fromValue(
-          lf.transaction.ExternalCallResult(
-            extensionId = src.extensionId,
-            functionId = src.functionId,
-            config = lf.data.Bytes.fromByteString(src.config),
-            input = lf.data.Bytes.fromByteString(src.input),
-            output = lf.data.Bytes.fromByteString(src.output),
-            valueSerializationVersion = valueSerializationVersion,
-          )
+              .fold(Result.fromErrorString, Result.fromValue)
+        for {
+          valueSerializationVersion <- valueSerializationVersion
+        } yield lf.transaction.ExternalCallResult(
+          extensionId = src.extensionId,
+          functionId = src.functionId,
+          config = lf.data.Bytes.fromByteString(src.config),
+          input = lf.data.Bytes.fromByteString(src.input),
+          output = lf.data.Bytes.fromByteString(src.output),
+          valueSerializationVersion = valueSerializationVersion,
         )
       }
 

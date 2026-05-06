@@ -193,7 +193,7 @@ class MockExternalCallServer(
 
             logger.debug(
               s"Received request: extensionId=$extensionId, functionId=$functionId, " +
-                s"mode=$mode, participantId=$participantId, inputSize=${input.length}"
+                s"mode=$mode, participantId=$participantId, inputSize=${inputHex.length / 2}"
             )
 
             // Find and invoke handler

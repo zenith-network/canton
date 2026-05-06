@@ -19,6 +19,9 @@ import scala.annotation.tailrec
 // The type checker is correct only for LF2
 private[validation] object Typing {
 
+  private val daExternalModule = DottedName.assertFromString("DA.External")
+  private val externalCallName = DottedName.assertFromString("externalCall")
+
   // stack-safety achieved via a Work trampoline.
   private sealed abstract class Work[A]
   private object Work {
@@ -353,10 +356,12 @@ private[validation] object Typing {
             env.checkInterfaceType(tyConName, params)
         }
       case (dfnName, dfn: DValue) =>
+        val identifier = Identifier(pkgId, QualifiedName(mod.name, dfnName))
         Env(
           languageVersion = langVersion,
           pkgInterface = pkgInterface,
-          ctx = Context.DefValue(pkgId, mod.name, dfnName),
+          ctx = Context.DefValue(identifier),
+          currentValue = Some(identifier -> dfn.typ),
         ).checkDValue(dfn)
       case (dfnName, DTypeSyn(params, replacementTyp)) =>
         val env =
@@ -422,6 +427,7 @@ private[validation] object Typing {
       ctx: Context,
       tVars: Map[TypeVarName, Kind] = Map.empty,
       eVars: Map[ExprVarName, Type] = Map.empty,
+      currentValue: Option[(Identifier, Type)] = None,
   ) {
 
     private[lf] def TTuple2(t1: Type, t2: Type) =
@@ -921,26 +927,37 @@ private[validation] object Typing {
 
     private def typeOfTyApp(expr: Expr, typs: List[Type]): Work[Type] = {
       def checkExternalCallType(requirement: SerializabilityRequirement, typ: Type): Unit = {
-        val serializableTypeVars = tVars.collect { case (name, KStar) => name }.toSet
+        val typExpanded = expandTypeSynonyms(typ)
+        val serializableTypeVars =
+          if (isTrustedExternalCallWrapperContext)
+            tVars.collect { case (name, KStar) => name }.toSet
+          else
+            Set.empty[TypeVarName]
         Serializability
-          .Env(pkgInterface, ctx, requirement, typ, vars = serializableTypeVars)
+          .Env(pkgInterface, ctx, requirement, typExpanded, vars = serializableTypeVars)
           .checkType()
-        val containsContractId = (Iterator.single(typ) ++ TypeIterable(typ)).exists {
-          case TApp(TBuiltin(BTContractId), _) => true
-          case _ => false
-        }
-        if (containsContractId)
-          throw EExpectedSerializableType(ctx, requirement, typ, URContractId)
+        if (containsContractIdDeep(typExpanded))
+          throw EExpectedSerializableType(ctx, requirement, typExpanded, URContractId)
       }
 
-      expr match {
-        case EBuiltinFun(BExternalCall) =>
-          typs.headOption.foreach(checkExternalCallType(SRExternalCallInput, _))
-          typs.drop(1).headOption.foreach(checkExternalCallType(SRExternalCallOutput, _))
-        case ETyApp(EBuiltinFun(BExternalCall), _) =>
-          typs.headOption.foreach(checkExternalCallType(SRExternalCallOutput, _))
-        case _ =>
-      }
+      def externalCallTypeRequirements(headType: Type): List[(SerializabilityRequirement, Type)] =
+        expandTypeSynonyms(headType) match {
+          case TForall((inputVar, KStar), TForall((outputVar, KStar), body))
+              if isExternalCallBody(
+                dropExternalCallContextArgs(body),
+                TVar(inputVar),
+                TVar(outputVar),
+              ) =>
+            List(SRExternalCallInput, SRExternalCallOutput).zip(typs)
+          case TForall((outputVar, KStar), body)
+              if isExternalCallBodyWithOutput(
+                dropExternalCallContextArgs(body),
+                TVar(outputVar),
+              ) =>
+            typs.headOption.toList.map(SRExternalCallOutput -> _)
+          case _ =>
+            Nil
+        }
 
       @tailrec
       def loopForall(body0: Type, typs: List[Type], acc: Map[TypeVarName, Type]): Type =
@@ -958,9 +975,78 @@ private[validation] object Typing {
         }
 
       typeOf(expr) { ty =>
-        Ret(loopForall(ty, typs, Map.empty))
+        val resultType = loopForall(ty, typs, Map.empty)
+        externalCallTypeRequirements(ty).foreach { case (requirement, typ) =>
+          checkExternalCallType(requirement, typ)
+        }
+        Ret(resultType)
       }
     }
+
+    private def isExternalCallBody(body: Type, inputType: Type, outputType: Type): Boolean =
+      body == (TText ->: TText ->: TText ->: inputType ->: TUpdate(outputType))
+
+    private def isExternalCallBodyWithOutput(body: Type, outputType: Type): Boolean = body match {
+      case TFun(TText, TFun(TText, TFun(TText, TFun(_, TUpdate(`outputType`))))) => true
+      case _ => false
+    }
+
+    private def isTrustedExternalCallWrapperContext: Boolean =
+      currentValue.exists { case (identifier, typ) =>
+        identifier.qualifiedName.module == Typing.daExternalModule &&
+        identifier.qualifiedName.name == Typing.externalCallName &&
+        isCanonicalExternalCallWrapperType(typ)
+      }
+
+    private def isCanonicalExternalCallWrapperType(typ: Type): Boolean =
+      expandTypeSynonyms(typ) match {
+        case TForall((inputVar, KStar), TForall((outputVar, KStar), body)) =>
+          isExternalCallBody(dropExternalCallContextArgs(body), TVar(inputVar), TVar(outputVar))
+        case _ => false
+      }
+
+    @tailrec
+    private def dropExternalCallContextArgs(typ: Type): Type =
+      expandTypeSynonyms(typ) match {
+        case TFun(arg, body) if expandTypeSynonyms(arg) != TText =>
+          dropExternalCallContextArgs(body)
+        case other => other
+      }
+
+    private def containsContractIdDeep(typ: Type): Boolean =
+      containsContractIdDeep(typ, Set.empty)
+
+    private def containsContractIdDeep(typ0: Type, seen: Set[TypeConId]): Boolean =
+      expandTypeSynonyms(typ0) match {
+        case TApp(TBuiltin(BTContractId), _) =>
+          true
+        case TTyConApp(tyCon, tArgs) =>
+          tArgs.iterator.exists(containsContractIdDeep(_, seen)) || {
+            !seen(tyCon) && {
+              val DDataType(_, tparams, dataCons) =
+                handleLookup(ctx, pkgInterface.lookupDataType(tyCon))
+              if (tparams.length != tArgs.length)
+                throw ETypeConAppWrongArity(ctx, tparams.length, TypeConApp(tyCon, tArgs))
+              val subst = (tparams.keys zip tArgs.iterator).toMap
+              val childTypes = dataCons match {
+                case DataRecord(fields) => fields.values
+                case DataVariant(variants) => variants.values
+                case _: DataEnum | DataInterface => Iterator.empty
+              }
+              childTypes.exists(typ =>
+                containsContractIdDeep(TypeSubst.substitute(subst, typ), seen + tyCon)
+              )
+            }
+          }
+        case TApp(fun, arg) =>
+          containsContractIdDeep(fun, seen) || containsContractIdDeep(arg, seen)
+        case TForall(_, body) =>
+          containsContractIdDeep(body, seen)
+        case TStruct(fields) =>
+          fields.values.exists(containsContractIdDeep(_, seen))
+        case _ =>
+          false
+      }
 
     private def typeOfTmLam(x: ExprVarName, typ: Type, body: Expr): Work[Type] = {
       checkType(typ, KStar)

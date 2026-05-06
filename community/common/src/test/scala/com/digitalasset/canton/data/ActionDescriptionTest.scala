@@ -5,6 +5,7 @@ package com.digitalasset.canton.data
 
 import com.digitalasset.canton.data.ActionDescription.*
 import com.digitalasset.canton.protocol.*
+import com.digitalasset.canton.protocol.v30
 import com.digitalasset.canton.util.LfTransactionBuilder.{defaultPackageId, defaultTemplateId}
 import com.digitalasset.canton.{BaseTest, LfPartyId}
 import com.digitalasset.daml.lf.data.{Bytes, ImmArray, Ref}
@@ -84,6 +85,50 @@ class ActionDescriptionTest extends AnyWordSpec with BaseTest {
     }
 
     "reject creation" when {
+      "an external call result has an invalid value serialization version" in {
+        val externalCallResults = ImmArray(
+          ExternalCallResult(
+            extensionId = "extension",
+            functionId = "function",
+            config = Bytes.fromStringUtf8("config"),
+            input = Bytes.fromStringUtf8("input"),
+            output = Bytes.fromStringUtf8("output"),
+            valueSerializationVersion = SerializationVersion.V2,
+          )
+        )
+        val node = ExampleTransactionFactory
+          .exerciseNodeWithoutChildren(
+            suffixedId,
+            actingParties = Set(ExampleTransactionFactory.submitter),
+          )
+          .copy(externalCallResults = externalCallResults)
+
+        val description = ActionDescription
+          .tryFromLfActionNode(
+            node,
+            Some(seed),
+            Set.empty,
+          )
+          .asInstanceOf[ExerciseActionDescription]
+
+        val proto = description.toProtoV30
+        val exerciseProto = proto.description match {
+          case v30.ActionDescription.Description.Exercise(value) => value
+          case other => fail(s"Expected exercise action description, got $other")
+        }
+        val invalidResult =
+          exerciseProto.externalCallResults.head.copy(valueSerializationVersion = "invalid")
+        val invalidProto = proto.copy(
+          description = v30.ActionDescription.Description.Exercise(
+            exerciseProto.copy(externalCallResults = Seq(invalidResult))
+          )
+        )
+
+        ActionDescription.fromProtoV30(invalidProto).left.value.toString should include(
+          "Unsupported serialization version"
+        )
+      }
+
       "the choice argument cannot be serialized" in {
         ExerciseActionDescription.create(
           suffixedId,

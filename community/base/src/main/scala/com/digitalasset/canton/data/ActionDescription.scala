@@ -206,18 +206,23 @@ object ActionDescription {
         .leftMap(err => ValueDeserializationError("chosen_value", err.errorMessage))
       actors <- e.actors.traverse(ProtoConverter.parseLfPartyId(_, field = "actors")).map(_.toSet)
       seed <- LfHash.fromProtoPrimitive("node_seed", e.nodeSeed)
-      externalCallResults = ImmArray.from(e.externalCallResults.map { r =>
-        ExternalCallResult(
-          extensionId = r.extensionId,
-          functionId = r.functionId,
-          config = Bytes.fromByteString(r.config),
-          input = Bytes.fromByteString(r.input),
-          output = Bytes.fromByteString(r.output),
-          valueSerializationVersion = SerializationVersion
-            .fromString(r.valueSerializationVersion)
-            .getOrElse(SerializationVersion.V2),
-        )
-      })
+      externalCallResults <- e.externalCallResults
+        .traverse { r =>
+          val valueSerializationVersion =
+            if (r.valueSerializationVersion.isEmpty) Right(SerializationVersion.V2)
+            else SerializationVersion.fromString(r.valueSerializationVersion).leftMap(OtherError(_))
+          valueSerializationVersion.map { valueSerializationVersion =>
+            ExternalCallResult(
+              extensionId = r.extensionId,
+              functionId = r.functionId,
+              config = Bytes.fromByteString(r.config),
+              input = Bytes.fromByteString(r.input),
+              output = Bytes.fromByteString(r.output),
+              valueSerializationVersion = valueSerializationVersion,
+            )
+          }
+        }
+        .map(ImmArray.from)
       actionDescription <- ExerciseActionDescription
         .create(
           inputContractId,

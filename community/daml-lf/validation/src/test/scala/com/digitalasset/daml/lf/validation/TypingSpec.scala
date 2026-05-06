@@ -332,6 +332,53 @@ final class TypingSpec extends AnyWordSpec with TableDrivenPropertyChecks with M
       }
     }
 
+    "reject external call types that contain ContractId" in {
+      val testCases = Table(
+        "expression",
+        E"""λ (cid: ContractId Mod:T) → (( EXTERNAL_CALL @(ContractId Mod:T) @Text "ext" "fun" "00" cid ))""",
+        E"""λ (box: Mod:CidBox) → (( EXTERNAL_CALL @Mod:CidBox @Text "ext" "fun" "00" box ))""",
+        E"""λ (input: Text) → (( EXTERNAL_CALL @Text @Mod:CidBox "ext" "fun" "00" input ))""",
+        E"""λ (box: Mod:PolyBox (ContractId Mod:T)) → (( EXTERNAL_CALL @(Mod:PolyBox (ContractId Mod:T)) @Text "ext" "fun" "00" box ))""",
+        E"""λ (cid: ContractId Mod:T) → (( ⸨ EXTERNAL_CALL ⸩ @(ContractId Mod:T) @Text "ext" "fun" "00" cid ))""",
+      )
+
+      forEvery(testCases) { exp =>
+        an[EExpectedSerializableType] shouldBe thrownBy(env.typeOfTopExpr(exp))
+      }
+    }
+
+    "reject polymorphic external call wrappers without a no-ContractId constraint" in {
+      val testCases = Table(
+        "expression",
+        E"""Λ (τ : ⋆). λ (input : τ) → (( EXTERNAL_CALL @τ @Text "ext" "fun" "00" input ))""",
+        E"""Λ (τ : ⋆). λ (input : Text) → (( EXTERNAL_CALL @Text @τ "ext" "fun" "00" input ))""",
+      )
+
+      forEvery(testCases) { exp =>
+        an[EExpectedSerializableType] shouldBe thrownBy(env.typeOfTopExpr(exp))
+      }
+    }
+
+    "allow the canonical DA.External.externalCall wrapper to use quantified type variables" in {
+      checkDaExternalExternalCall(
+        T"∀ (input : ⋆) (output : ⋆). Bool → Bool → Text → Text → Text → input → Update output",
+        E"""Λ (input : ⋆) (output : ⋆).
+             λ (_serializableInput : Bool) (_serializableOutput : Bool)
+               (extensionId : Text) (functionId : Text) (configHex : Text) (inputValue : input) →
+               ⸨ EXTERNAL_CALL @input @output extensionId functionId configHex inputValue ⸩""",
+      )
+    }
+
+    "reject non-canonical DA.External.externalCall wrappers" in {
+      an[EExpectedSerializableType] shouldBe thrownBy {
+        checkDaExternalExternalCall(
+          T"∀ (input : ⋆). input → Update Text",
+          E"""Λ (input : ⋆). λ (inputValue : input) →
+               EXTERNAL_CALL @input @Text "ext" "fun" "00" inputValue""",
+        )
+      }
+    }
+
     "not reject exhaustive patterns" in {
 
       val testCases = Table(
@@ -1955,6 +2002,8 @@ final class TypingSpec extends AnyWordSpec with TableDrivenPropertyChecks with M
          synonym S = Mod:U;
 
          record @serializable T = { person: Party, name: Text };
+         record @serializable CidBox = { cid: ContractId Mod:T };
+         record @serializable PolyBox (a: *) = { payload: a };
          template (this : T) =  {
            precondition True;
            signatories Nil @Party;
@@ -2010,6 +2059,28 @@ final class TypingSpec extends AnyWordSpec with TableDrivenPropertyChecks with M
   private[this] def parsePackage(languageVersion: LV, source: String): Package =
     new SyntaxHelper(StringContext(source))
       .p[this.type]()(parserParameters.copy(languageVersion = languageVersion))
+
+  private[this] def checkDaExternalExternalCall(typ: Type, body: Expr): Unit = {
+    val moduleName = DottedName.assertFromString("DA.External")
+    val valueName = DottedName.assertFromString("externalCall")
+    val module = Ast.Module(
+      name = moduleName,
+      definitions = Map(valueName -> Ast.DValue(typ, body)),
+      templates = Map.empty,
+      exceptions = Map.empty,
+      interfaces = Map.empty,
+      featureFlags = Ast.FeatureFlags.default,
+    )
+    val pkg = Ast.Package(
+      modules = Map(moduleName -> module),
+      directDeps = Set.empty,
+      languageVersion = defaultLanguageVersion,
+      metadata = packageMetadata,
+      imports = Ast.DeclaredImports(Set.empty),
+    )
+
+    Typing.checkModule(PackageInterface(Map(defaultPackageId -> pkg)), defaultPackageId, module)
+  }
 
   private[this] val env = mkEnv(LV.defaultLfVersion)
 

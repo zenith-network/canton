@@ -136,6 +136,35 @@ object DAMLe {
       }.toMap
   }
 
+  private[participant] def externalCallEvidenceMismatch(
+      stored: (LfBytes, LfBytes, LfBytes, SerializationVersion),
+      requestedConfigHash: String,
+      requestedInput: String,
+      requestedValueSerializationVersion: SerializationVersion,
+      computedOutput: Option[String],
+  ): Option[String] = {
+    val (storedConfig, storedInput, storedOutput, storedSerializationVersion) = stored
+    val storedConfigHex = storedConfig.toHexString
+    val storedInputHex = storedInput.toHexString
+    val storedOutputHex = storedOutput.toHexString
+    val mismatches = Seq(
+      Option.when(storedConfigHex != requestedConfigHash)(
+        s"config expected '$storedConfigHex' but engine requested '$requestedConfigHash'"
+      ),
+      Option.when(storedInputHex != requestedInput)(
+        s"input expected '$storedInputHex' but engine requested '$requestedInput'"
+      ),
+      Option.when(storedSerializationVersion != requestedValueSerializationVersion)(
+        s"value serialization version expected '$storedSerializationVersion' but engine requested '$requestedValueSerializationVersion'"
+      ),
+      computedOutput.filter(_ != storedOutputHex).map { output =>
+        s"output expected '$storedOutputHex' but handler computed '$output'"
+      },
+    ).flatten
+
+    Option.when(mismatches.nonEmpty)(mismatches.mkString("; "))
+  }
+
   trait HasReinterpret {
     def reinterpret(
         contracts: ReplayContractLookup,
@@ -436,6 +465,28 @@ class DAMLe(
               resume,
             ) =>
           val currentCallIndex = externalCallCounter.getAndIncrement()
+          val externalCallKey = (extensionId, functionId, currentCallIndex)
+
+          def externalCallVerdictError(
+              verdict: String,
+              message: String,
+          ): FutureUnlessShutdown[Either[ReinterpretationError, A]] =
+            FutureUnlessShutdown.pure(
+              Left(
+                EngineError(
+                  Error.Interpretation(
+                    Error.Interpretation.Internal(
+                      "reinterpretation",
+                      s"$verdict: $message " +
+                        s"(extensionId=$extensionId, functionId=$functionId, callIndex=$currentCallIndex)",
+                      None,
+                    ),
+                    None,
+                  )
+                )
+              )
+            )
+
           (isConfirmer, externalCallHandler) match {
             case (true, Some(handler)) =>
               logger.debug(
@@ -455,34 +506,34 @@ class DAMLe(
                 )
                 .flatMap {
                   case Right(output) =>
-                    val storedOutput = storedExternalCallResults
-                      .get((extensionId, functionId, currentCallIndex))
-                      .map(_._3.toHexString)
-
-                    storedOutput match {
-                      case Some(expected) if expected != output =>
+                    storedExternalCallResults.get(externalCallKey) match {
+                      case None =>
                         logger.warn(
-                          s"External call result mismatch for extension=$extensionId, function=$functionId, callIndex=$currentCallIndex: " +
-                            s"confirmer got '$output' but submitter recorded '$expected'"
+                          s"Missing stored external call result for confirmer replay: extension=$extensionId, function=$functionId, callIndex=$currentCallIndex"
                         )
-                        FutureUnlessShutdown.pure(
-                          Left(
-                            EngineError(
-                              Error.Interpretation(
-                                Error.Interpretation.Internal(
-                                  "reinterpretation",
-                                  s"LOCAL_VERDICT_EXTERNAL_CALL_RESULT_MISMATCH: " +
-                                    s"confirmer computed '$output' but submitter recorded '$expected' " +
-                                    s"(extensionId=$extensionId, functionId=$functionId, callIndex=$currentCallIndex)",
-                                  None,
-                                ),
-                                None,
-                              )
+                        externalCallVerdictError(
+                          "LOCAL_VERDICT_EXTERNAL_CALL_REPLAY_MISSING",
+                          "no stored result for confirmer replay. This may indicate transaction tampering or a mismatch between the transaction and its metadata.",
+                        )
+                      case Some(stored) =>
+                        externalCallEvidenceMismatch(
+                          stored,
+                          configHash,
+                          input,
+                          valueSerializationVersion,
+                          Some(output),
+                        ) match {
+                          case Some(mismatch) =>
+                            logger.warn(
+                              s"External call result mismatch for extension=$extensionId, function=$functionId, callIndex=$currentCallIndex: $mismatch"
                             )
-                          )
-                        )
-                      case _ =>
-                        handleResultInternal(resume(Right(output)))
+                            externalCallVerdictError(
+                              "LOCAL_VERDICT_EXTERNAL_CALL_RESULT_MISMATCH",
+                              mismatch,
+                            )
+                          case None =>
+                            handleResultInternal(resume(Right(output)))
+                        }
                     }
                   case Left(error) =>
                     FutureUnlessShutdown.pure(
@@ -504,51 +555,35 @@ class DAMLe(
                 }
 
             case _ =>
-              val resultToReplay = storedExternalCallResults
-                .get((extensionId, functionId, currentCallIndex))
-                .map { case (storedConfig, storedInput, output, storedSerializationVersion) =>
-                  if (storedConfig.toHexString != configHash) {
-                    logger.warn(
-                      s"Config mismatch for external call replay: expected=${storedConfig.toHexString}, got=$configHash"
-                    )
-                  }
-                  if (storedInput.toHexString != input) {
-                    logger.warn(
-                      s"Input mismatch for external call replay: expected=${storedInput.toHexString}, got=$input"
-                    )
-                  }
-                  if (storedSerializationVersion != valueSerializationVersion) {
-                    logger.warn(
-                      s"Serialization version mismatch for external call replay: expected=$storedSerializationVersion, got=$valueSerializationVersion"
-                    )
-                  }
-                  output.toHexString
-                }
-
-              resultToReplay match {
-                case Some(output) =>
-                  logger.debug(
-                    s"Observer replaying external call result for extension=$extensionId, function=$functionId"
-                  )
-                  handleResultInternal(resume(Right(output)))
-
+              storedExternalCallResults.get(externalCallKey) match {
                 case None =>
-                  FutureUnlessShutdown.pure(
-                    Left(
-                      EngineError(
-                        Error.Interpretation(
-                          Error.Interpretation.Internal(
-                            "reinterpretation",
-                            s"LOCAL_VERDICT_EXTERNAL_CALL_REPLAY_MISSING: " +
-                              s"no stored result for extensionId=$extensionId, functionId=$functionId, callIndex=$currentCallIndex. " +
-                              "This may indicate transaction tampering or a mismatch between the transaction and its metadata.",
-                            None,
-                          ),
-                          None,
-                        )
-                      )
-                    )
+                  externalCallVerdictError(
+                    "LOCAL_VERDICT_EXTERNAL_CALL_REPLAY_MISSING",
+                    "no stored result for replay. This may indicate transaction tampering or a mismatch between the transaction and its metadata.",
                   )
+                case Some(stored) =>
+                  externalCallEvidenceMismatch(
+                    stored,
+                    configHash,
+                    input,
+                    valueSerializationVersion,
+                    computedOutput = None,
+                  ) match {
+                    case Some(mismatch) =>
+                      logger.warn(
+                        s"External call replay evidence mismatch for extension=$extensionId, function=$functionId, callIndex=$currentCallIndex: $mismatch"
+                      )
+                      externalCallVerdictError(
+                        "LOCAL_VERDICT_EXTERNAL_CALL_RESULT_MISMATCH",
+                        mismatch,
+                      )
+                    case None =>
+                      val output = stored._3.toHexString
+                      logger.debug(
+                        s"Observer replaying external call result for extension=$extensionId, function=$functionId"
+                      )
+                      handleResultInternal(resume(Right(output)))
+                  }
               }
           }
       }

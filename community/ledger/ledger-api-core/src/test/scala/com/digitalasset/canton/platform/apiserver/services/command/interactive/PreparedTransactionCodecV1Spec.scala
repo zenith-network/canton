@@ -13,8 +13,9 @@ import com.digitalasset.canton.platform.apiserver.services.command.interactive.c
 import com.digitalasset.canton.topology.GeneratorsTopology
 import com.digitalasset.canton.{BaseTest, GeneratorsLf, HasExecutionContext}
 import com.digitalasset.daml.lf.crypto.Hash
-import com.digitalasset.daml.lf.data.ImmArray
+import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
 import com.digitalasset.daml.lf.transaction.{
+  ExternalCallResult,
   Node,
   NodeId,
   SerializationVersion as LfSerializationVersion,
@@ -75,6 +76,44 @@ class PreparedTransactionCodecV1Spec
         val encoded =
           encoder.v1.exerciseTransformer(LfSerializationVersion.V1).transform(node).asEither.value
         decoder.v1.exerciseTransformer.transform(encoded).asEither.value shouldEqual node
+      }
+    }
+
+    "reject invalid external call result value serialization versions" in {
+      val externalCallResult = ExternalCallResult(
+        extensionId = "extension",
+        functionId = "function",
+        config = Bytes.fromStringUtf8("config"),
+        input = Bytes.fromStringUtf8("input"),
+        output = Bytes.fromStringUtf8("output"),
+        valueSerializationVersion = LfSerializationVersion.V2,
+      )
+
+      implicit val nodeGen: Arbitrary[Node.Exercise] = Arbitrary(
+        for {
+          exerciseNode <- ValueGenerators.danglingRefExerciseNodeGen
+          normalized = normalizeNodeForV1(exerciseNode).copy(
+            externalCallResults = ImmArray(externalCallResult)
+          )
+        } yield normalized
+      )
+
+      forAll { (node: Node.Exercise) =>
+        val encoded =
+          encoder.v1.exerciseTransformer(LfSerializationVersion.VDev).transform(node).asEither.value
+        val invalid = encoded.copy(
+          externalCallResults =
+            encoded.externalCallResults.map(_.copy(valueSerializationVersion = "invalid"))
+        )
+
+        decoder.v1.exerciseTransformer
+          .transform(invalid)
+          .asEither
+          .left
+          .value
+          .toString should include(
+          "Unsupported serialization version"
+        )
       }
     }
 
