@@ -338,6 +338,8 @@ At a high level:
 
 The runtime must not guess the output type from the bytes. The expected output type must come from the Daml call site and must survive compiler lowering into the interpreter.
 
+The feature should also preserve the existing external-call transaction-shape invariant: an external call is only valid inside an exercise context, because the result evidence is attached to the enclosing exercise node. Structured input/output changes the payload encoding, not where external-call evidence lives in the transaction.
+
 That last point is critical. Our prototype initially failed because the generic stdlib wrapper hid the concrete output type. Speedy later saw a type variable such as `output` instead of a real type such as `Text` or `EchoPayload`. The production implementation must make that impossible.
 
 ## Compiler And Language Requirements (Daml Repository)
@@ -396,6 +398,8 @@ The transaction evidence for an external call should include at least:
 - value serialization version.
 
 This is the deterministic evidence needed to replay, compare, and validate external-call results.
+
+The evidence should continue to be attached to the enclosing exercise node. The structured I/O design does not propose root-level external calls or a new transaction node kind.
 
 The transaction does not need to store the original structured Daml value separately. The structured value is represented by the encoded bytes, and the expected type is known from the interpreted Daml code.
 
