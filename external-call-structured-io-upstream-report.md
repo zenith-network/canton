@@ -277,7 +277,7 @@ It does not mean every LF type or every runtime value should work. In particular
 
 The word "serializable" matters because the runtime must be able to turn the value into stable bytes and later validate the returned bytes against a type.
 
-## ContractId Policy
+## ContractId Policy (Daml And Canton Repositories)
 
 The first production-ready design should reject `ContractId` values in external-call input and output.
 
@@ -313,36 +313,36 @@ The initial upstream design should therefore state:
 
 This should be enforced in two places:
 
-1. Type-level validation should reject external-call input/output types that contain `ContractId`.
-2. Value-level validation should reject any contract ids that appear in values despite type-level checks, including local or relative contract ids at lower runtime layers.
+1. **Daml repository:** type-level validation should reject external-call input/output types that contain `ContractId`.
+2. **Canton repository:** value-level validation should reject any contract ids that appear in values despite type-level checks, including local or relative contract ids at lower runtime layers.
 
 This keeps the first design focused on pure business data.
 
-## Runtime Model
+## Runtime Model (Primarily Canton Repository)
 
-The runtime model should be straightforward and deterministic.
+The runtime model is primarily Canton repository work. It assumes the Daml repository has already compiled the call into LF with concrete input and output types. Once Canton receives that typed LF operation, the runtime behavior should be straightforward and deterministic.
 
 At a high level:
 
-1. Daml code calls `externalCall`.
-2. The compiler preserves the concrete input and output types.
-3. The LF/Speedy runtime evaluates the input value.
-4. The runtime validates that the input value is allowed.
-5. The runtime encodes the input value as stable LF value bytes.
-6. Canton calls the configured extension service.
-7. The service returns LF value bytes.
-8. The runtime decodes those bytes.
-9. The runtime validates the decoded value against the expected output type.
-10. The runtime records the external-call evidence in the transaction.
-11. Daml code receives the typed output value.
+1. **Daml application:** Daml code calls `externalCall`.
+2. **Daml repository:** the compiler preserves the concrete input and output types.
+3. **Canton repository:** the LF/Speedy runtime evaluates the input value.
+4. **Canton repository:** the runtime validates that the input value is allowed.
+5. **Canton repository:** the runtime encodes the input value as stable LF value bytes.
+6. **Canton repository:** Canton calls the configured extension service.
+7. **External service:** the service returns LF value bytes.
+8. **Canton repository:** the runtime decodes those bytes.
+9. **Canton repository:** the runtime validates the decoded value against the expected output type.
+10. **Canton repository:** the runtime records the external-call evidence in the transaction.
+11. **Daml application:** Daml code receives the typed output value.
 
 The runtime must not guess the output type from the bytes. The expected output type must come from the Daml call site and must survive compiler lowering into the interpreter.
 
 That last point is critical. Our prototype initially failed because the generic stdlib wrapper hid the concrete output type. Speedy later saw a type variable such as `output` instead of a real type such as `Text` or `EchoPayload`. The production implementation must make that impossible.
 
-## Compiler And Language Requirements
+## Compiler And Language Requirements (Daml Repository)
 
-The public Daml function `DA.External.externalCall` should not be implemented as an ordinary polymorphic wrapper that accidentally erases the concrete type information needed by the runtime.
+This section is Daml repository work. The public Daml function `DA.External.externalCall` should not be implemented as an ordinary polymorphic wrapper that accidentally erases the concrete type information needed by the Canton runtime.
 
 The compiler needs a formal mechanism for this kind of function. There are several possible implementation strategies:
 
@@ -359,9 +359,9 @@ The source-level API should also restore `Serializable input` and `Serializable 
 
 Source-level constraints are not enough by themselves. Hand-written LF or compiler bugs should not be able to instantiate the builtin at unsupported types. LF validation should independently reject non-serializable or disallowed external-call input/output types.
 
-## Service Protocol
+## Service Protocol (Canton Repository)
 
-The external service should not receive Daml source syntax. It should receive a well-defined request envelope.
+The service protocol is Canton repository work, because Canton owns participant-side extension-service integration. The external service should not receive Daml source syntax. It should receive a well-defined request envelope.
 
 The envelope should include:
 
@@ -382,9 +382,9 @@ The service needs enough information to understand the input and produce the rig
 
 This type metadata does not necessarily need to become consensus-critical transaction data in the first version. It can be derived from the Daml call site during interpretation. The transaction must record the byte-level evidence needed for validation; service-facing metadata can be regenerated from the package and call site.
 
-## Transaction And Validation Model
+## Transaction And Validation Model (Canton Repository)
 
-The transaction/protocol layer should remain byte-oriented.
+The transaction and validation model is Canton repository work. The transaction/protocol layer should remain byte-oriented.
 
 The transaction evidence for an external call should include at least:
 
@@ -407,9 +407,9 @@ Type identity in transaction metadata is an open design question. It may be usef
 
 This keeps the safety model simple. The external service does not get to decide what type it returned. The Daml program decides the expected type, and the runtime enforces it.
 
-## Error Model
+## Error Model (Primarily Canton Repository)
 
-External-call failures should not be reported as generic Daml `UserError`, except when the Daml program itself explicitly calls `error`.
+The external-call error hierarchy is primarily Canton repository work, because these failures occur while preparing, executing, decoding, replaying, or validating an external call. External-call failures should not be reported as generic Daml `UserError`, except when the Daml program itself explicitly calls `error`.
 
 This aligns with upstream maintainer feedback. `UserError` means the Daml programmer deliberately threw a Daml error. External-call runtime failures are different. They should have their own error hierarchy so operators and developers can tell what went wrong.
 
@@ -472,11 +472,9 @@ Examples:
 
 These should be internal errors or crashes in the existing Canton/LF sense, not user-facing Daml errors.
 
-## Security And Privacy Model
+## Security And Privacy Model (Daml API And Canton Runtime)
 
-Structured external calls create an explicit outbound disclosure boundary.
-
-That should be documented clearly:
+The security and privacy model spans both repositories. The Daml repository should expose and document the API as an explicit outbound disclosure boundary. The Canton repository should enforce the runtime limits, validation rules, logging behavior, and transaction evidence needed to make that boundary safe. The documentation should state clearly:
 
 > Anything passed as external-call input is disclosed to the configured extension service.
 
@@ -492,7 +490,7 @@ The system should record enough evidence to validate that behavior. Confirming v
 
 ### Malicious Or Broken Services
 
-The runtime must assume that an external service can return invalid data.
+The Canton runtime must assume that an external service can return invalid data.
 
 The service might return malformed bytes, a value of the wrong type, an oversized payload, or a valid value that is semantically wrong for the application. The runtime can protect against malformed, oversized, and type-mismatched output. It cannot know whether a business answer is semantically correct unless the Daml contract checks it.
 
@@ -508,13 +506,13 @@ For example, if a price oracle returns a quote, the Daml contract may still need
 
 ### ContractId Exclusion
 
-Rejecting `ContractId` in the first design is a security simplification.
+Rejecting `ContractId` in the first design is a security simplification. The Daml repository should reject `ContractId` at the type/API boundary, and the Canton repository should still reject any contract ids that appear at runtime.
 
 It avoids turning external-call services into indirect participants in contract visibility and disclosure logic. If contract references become necessary later, they should be introduced with a dedicated design that explains how visibility, disclosure, activeness, reassignment, and validation work.
 
 ### Logging And Observability
 
-External-call logs should avoid dumping raw structured payloads by default.
+External-call logging and observability are Canton repository concerns. Logs should avoid dumping raw structured payloads by default.
 
 Because structured input may contain business-sensitive data, logs should prefer:
 
@@ -530,7 +528,7 @@ Detailed payload logging should be opt-in and clearly marked as sensitive.
 
 ### Size And Resource Limits
 
-Structured values can be large. The production feature should define size limits for:
+Size and resource limits are Canton repository concerns. Structured values can be large. The production feature should define size limits for:
 
 - encoded input value bytes;
 - encoded output value bytes;
@@ -540,9 +538,9 @@ Structured values can be large. The production feature should define size limits
 
 The cost model should price the interpreter/runtime work and prevent unbounded local resource use. It should not try to price arbitrary remote service execution. Remote service execution is outside the ledger interpreter and should be controlled operationally through timeouts, service configuration, rate limits, and deployment policy.
 
-## Package Upgrades And Schema Evolution
+## Package Upgrades And Schema Evolution (Daml/Canton Boundary)
 
-Structured external-call payloads are tied to Daml/LF type identity.
+Package upgrades and schema evolution sit at the Daml/Canton boundary. The Daml repository defines package and type identity. The Canton repository uses that identity when building service envelopes, decoding returned values, and validating transaction evidence. Structured external-call payloads are tied to Daml/LF type identity.
 
 That is a strength because the runtime can validate the output against the expected type. It is also something to handle carefully when packages evolve.
 
@@ -552,9 +550,9 @@ The service should not rely only on a human-readable type name. Two packages may
 
 This does not mean the first design needs a full schema registry. But the protocol should not paint us into a corner. It should include a versioned place for type identity and package identity.
 
-## Config Should Stay BytesHex
+## Config Should Stay BytesHex (Daml API Decision)
 
-For consistency, it is natural to ask whether `config` should also become structured.
+This is a Daml repository API decision. For consistency, it is natural to ask whether `config` should also become structured.
 
 The recommendation is: not in the first production design.
 
@@ -575,20 +573,21 @@ But that should be a follow-up. The core feature is structured input and output.
 
 The prototype proved the core data path:
 
-- structured Daml input can be encoded into LF value bytes;
-- an external service can receive those bytes;
-- the service can return LF value bytes;
-- the runtime can decode and type-check the response;
-- Daml receives a typed output value.
+- **Daml repository:** structured Daml input can be exposed through a typed `externalCall` API.
+- **Canton repository:** structured Daml input can be encoded into LF value bytes.
+- **Canton repository:** an external service can receive those bytes through participant-side integration.
+- **External service:** the service can return LF value bytes.
+- **Canton repository:** the runtime can decode and type-check the response.
+- **Daml application:** Daml receives a typed output value.
 
 The prototype also exposed what needs to be made production-grade:
 
-- the compiler must preserve concrete input/output types;
-- `Serializable` constraints need a principled implementation;
-- runtime errors need a dedicated taxonomy;
-- LF value serialization versioning must be stable and explicit;
-- allowed and disallowed types must be specified;
-- tests must cover more than the happy path.
+- **Daml repository:** the compiler must preserve concrete input/output types.
+- **Daml repository:** `Serializable` constraints need a principled implementation.
+- **Canton repository:** runtime errors need a dedicated taxonomy.
+- **Canton repository:** LF value serialization versioning must be stable and explicit.
+- **Daml and Canton repositories:** allowed and disallowed types must be specified and enforced at both type and value boundaries.
+- **Daml and Canton repositories:** tests must cover more than the happy path.
 
 The prototype should therefore be treated as evidence that the design is feasible, not as the code shape we would propose upstream unchanged.
 
@@ -596,16 +595,16 @@ The prototype should therefore be treated as evidence that the design is feasibl
 
 The following decisions are ready to be approved:
 
-1. The Daml API should support structured `input` and structured `output`.
-2. The Daml API should keep `config` as `BytesHex`.
-3. The API should require `Serializable input` and `Serializable output`.
-4. The first production design should reject `ContractId` in input and output.
-5. The runtime should encode/decode input and output using a stable LF value serialization format.
-6. The runtime should validate returned output bytes against the expected Daml output type.
-7. The service protocol should use a versioned envelope rather than naked bytes.
-8. The transaction/protocol layer should record byte-level evidence needed for validation.
-9. External-call runtime failures should use a dedicated error hierarchy, not generic `UserError`.
-10. The feature should be documented as an explicit outbound disclosure boundary.
+1. **Daml repository:** the Daml API should support structured `input` and structured `output`.
+2. **Daml repository:** the Daml API should keep `config` as `BytesHex`.
+3. **Daml repository:** the API should require `Serializable input` and `Serializable output`.
+4. **Daml and Canton repositories:** the first production design should reject `ContractId` in input and output.
+5. **Canton repository:** the runtime should encode/decode input and output using a stable LF value serialization format.
+6. **Canton repository:** the runtime should validate returned output bytes against the expected Daml output type.
+7. **Canton repository:** the service protocol should use a versioned envelope rather than naked bytes.
+8. **Canton repository:** the transaction/protocol layer should record byte-level evidence needed for validation.
+9. **Canton repository:** external-call runtime failures should use a dedicated error hierarchy, not generic `UserError`.
+10. **Daml and Canton repositories:** the feature should be documented as an explicit outbound disclosure boundary.
 
 ## Open Questions
 
@@ -613,43 +612,43 @@ Some questions remain, but they do not block agreement on the final direction.
 
 ### Exact Stable Serialization Version
 
-The prototype used a development serialization version. Production needs a stable, versioned LF value payload format.
+This is a Canton repository question. The prototype used a development serialization version. Production needs a stable, versioned LF value payload format.
 
 The design should specify which serialization version is used and how it is feature-gated.
 
 ### Type Metadata In Transactions
 
-The service request envelope should include type identity. It is still open whether transaction evidence should also record input/output type identity directly.
+This is primarily a Canton repository question, with input from Daml maintainers on type identity. The service request envelope should include type identity. It is still open whether transaction evidence should also record input/output type identity directly.
 
 The conservative position is to keep consensus-critical transaction evidence byte-oriented and derive types from the Daml package during validation. Optional transaction notes or audit metadata can record type identity later.
 
 ### Maps
 
-Maps should probably be allowed if their LF value encoding is stable and canonical.
+This spans both repositories. Daml repository validation should decide whether map types are allowed at the API/LF boundary, and Canton repository runtime tests should verify that map encoding is stable and canonical. Maps should probably be allowed if their LF value encoding is stable and canonical.
 
 Before finalizing that, tests should explicitly cover map serialization, deterministic ordering, and type validation.
 
 ### ContractId Future
 
-`ContractId` should be rejected in the first production design.
+This spans both repositories. `ContractId` should be rejected in the first production design.
 
 A future design could allow it, but only after addressing visibility, authorization, explicit disclosure, activeness, reassignment, and validation semantics.
 
 ### Config As Structured Data
 
-Config should remain `BytesHex` in the first design.
+This is a Daml repository API question. Config should remain `BytesHex` in the first design.
 
 A future API could support structured config if there is enough demand.
 
 ### Schema Discovery
 
-The service envelope should carry type identity, but it does not necessarily need to carry a full schema. Services may obtain package/interface information out of band.
+This is a Canton service-protocol question that depends on Daml package/type identity. The service envelope should carry type identity, but it does not necessarily need to carry a full schema. Services may obtain package/interface information out of band.
 
 The long-term story for service schema discovery remains open.
 
 ### Operational Limits
 
-The final implementation needs concrete limits for input size, output size, timeouts, retry behavior, and logging.
+This is a Canton repository question. The final implementation needs concrete limits for input size, output size, timeouts, retry behavior, and logging.
 
 Those limits should be part of production hardening.
 
@@ -657,26 +656,26 @@ Those limits should be part of production hardening.
 
 The production feature should have tests at several levels.
 
-### Daml Compiler Tests
+### Daml Repository: Compiler And API Tests
 
 Compiler tests should prove that:
 
 - the public `DA.External.externalCall` API accepts structured input/output;
 - `Serializable` constraints work in downstream packages;
 - the compiler lowers `externalCall` at the call site with concrete input/output types;
-- unsupported types are rejected;
+- unsupported types are rejected at the Daml/API boundary;
 - `ContractId` input/output is rejected.
 
-### LF Validation Tests
+### Daml And Canton Repositories: LF Validation Tests
 
-LF validation should prove that:
+LF validation exists at the boundary between compiler/package checking and runtime interpretation, so the exact test location depends on the upstream repository split. The important point is that both generated LF and hand-written LF are covered. LF validation should prove that:
 
 - `BEExternalCall` has the intended polymorphic type;
 - only serializable input/output types are accepted;
 - disallowed types cannot be used from hand-written LF;
 - the feature is gated by the correct LF version.
 
-### Runtime Tests
+### Canton Repository: Runtime Tests
 
 Runtime tests should cover:
 
@@ -694,7 +693,7 @@ Runtime tests should cover:
 - oversized input/output;
 - strict config hex validation.
 
-### Canton End-To-End Tests
+### Canton Repository: End-To-End Tests
 
 End-to-end tests should cover:
 
