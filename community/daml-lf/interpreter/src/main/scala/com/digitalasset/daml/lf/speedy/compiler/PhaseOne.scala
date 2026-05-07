@@ -8,7 +8,6 @@ package compiler
 import com.digitalasset.daml.lf.data.Ref.*
 import com.digitalasset.daml.lf.data.{ImmArray, Struct}
 import com.digitalasset.daml.lf.language.Ast.*
-import com.digitalasset.daml.lf.language.Util.{substitute, TFun, TText, TUpdate}
 import com.digitalasset.daml.lf.language.{LookupError, PackageInterface}
 import com.digitalasset.daml.lf.speedy.Compiler.{ProfilingMode, StackTraceMode, CompilationError}
 import com.digitalasset.daml.lf.speedy.SBuiltinFun.*
@@ -29,9 +28,6 @@ import scala.collection.immutable.ArraySeq
   */
 
 private[compiler] object PhaseOne {
-
-  private val DaExternalModule = DottedName.assertFromString("DA.External")
-  private val ExternalCallName = DottedName.assertFromString("externalCall")
 
   final case class Config(
       profiling: ProfilingMode,
@@ -206,17 +202,13 @@ private[lf] final class PhaseOne(
         Return(compileBuiltinCon(con))
       case EBuiltinLit(lit) =>
         Return(compileBuiltinLit(lit))
-      case ETyApp(ETyApp(EVal(ref), inputType), outputType) if isExternalCallWrapperValue(ref) =>
-        externalCallWrapperBuiltin(ref, inputType, outputType) match {
-          case Some(builtin) => Return(builtin)
-          case None => processExp(env, EVal(ref))
-        }
+      case expr if externalCallTypeApp(expr).isDefined =>
+        val (inputType, outputType) = externalCallTypeApp(expr).get
+        Return(SEBuiltin(SBExternalCall(inputType, outputType)))
       case ETyAbs(_, body) =>
         processExp(env, body)
       case EAbs(_, _) =>
         compileAbss(env, exp, arity = 0)
-      case ETyApp(ETyApp(EBuiltinFun(BExternalCall), inputType), outputType) =>
-        Return(SEBuiltin(SBExternalCall(inputType, outputType)))
       case ETyApp(body, _) =>
         processExp(env, body)
       case EApp(_, _) =>
@@ -288,7 +280,7 @@ private[lf] final class PhaseOne(
       case EUpdate(upd) =>
         compileEUpdate(env, upd)
       case ELocation(loc, exp) =>
-        compileExp(env, stripLocsAndTypes(exp)) { exp =>
+        compileExp(env, stripLocs(exp)) { exp =>
           Return(maybeSELocation(loc, exp))
         }
       case EToAny(ty, exp) =>
@@ -379,51 +371,18 @@ private[lf] final class PhaseOne(
 
   }
 
-  private[this] def isExternalCallWrapperValue(ref: ValueRef): Boolean =
-    ref.qualifiedName.module == DaExternalModule &&
-      ref.qualifiedName.name == ExternalCallName
-
-  private[this] def externalCallWrapperBuiltin(
-      ref: ValueRef,
-      inputType: Type,
-      outputType: Type,
-  ): Option[SExpr] =
-    externalCallWrapperContextArity(ref, inputType, outputType).map { contextArity =>
-      val builtin = SEBuiltin(SBExternalCall(inputType, outputType))
-      if (contextArity == 0) builtin
-      else withLabel(t.AnonymousClosure, SEAbs(contextArity, builtin))
-    }
-
-  private[this] def externalCallWrapperContextArity(
-      ref: ValueRef,
-      inputType: Type,
-      outputType: Type,
-  ): Option[Int] =
-    handleLookup(NameOf.qualifiedNameOfCurrentFunc, pkgInterface.lookupValue(ref)).typ match {
-      case TForall((inputVar, KStar), TForall((outputVar, KStar), body)) =>
-        countExternalCallContextArgs(
-          substitute(body, Seq(inputVar -> inputType, outputVar -> outputType)),
-          inputType,
-          outputType,
-          0,
-        )
+  private[this] def externalCallTypeApp(expr: Expr): Option[(Type, Type)] =
+    stripLocs(expr) match {
+      case ETyApp(outputHead, outputType) =>
+        stripLocs(outputHead) match {
+          case ETyApp(inputHead, inputType) =>
+            stripLocs(inputHead) match {
+              case EBuiltinFun(BExternalCall) => Some(inputType -> outputType)
+              case _ => None
+            }
+          case _ => None
+        }
       case _ => None
-    }
-
-  @tailrec
-  private[this] def countExternalCallContextArgs(
-      typ: Type,
-      inputType: Type,
-      outputType: Type,
-      arity: Int,
-  ): Option[Int] =
-    typ match {
-      case TFun(arg, body) if arg != TText =>
-        countExternalCallContextArgs(body, inputType, outputType, arity + 1)
-      case TFun(TText, TFun(TText, TFun(TText, TFun(`inputType`, TUpdate(`outputType`))))) =>
-        Some(arity)
-      case _ =>
-        None
     }
 
   private[this] def compileIdentity(env: Env) = SEAbs(1, SEVarLevel(env.position))

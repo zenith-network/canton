@@ -19,9 +19,6 @@ import scala.annotation.tailrec
 // The type checker is correct only for LF2
 private[validation] object Typing {
 
-  private val daExternalModule = DottedName.assertFromString("DA.External")
-  private val externalCallName = DottedName.assertFromString("externalCall")
-
   // stack-safety achieved via a Work trampoline.
   private sealed abstract class Work[A]
   private object Work {
@@ -356,12 +353,10 @@ private[validation] object Typing {
             env.checkInterfaceType(tyConName, params)
         }
       case (dfnName, dfn: DValue) =>
-        val identifier = Identifier(pkgId, QualifiedName(mod.name, dfnName))
         Env(
           languageVersion = langVersion,
           pkgInterface = pkgInterface,
-          ctx = Context.DefValue(identifier),
-          currentValue = Some(identifier -> dfn.typ),
+          ctx = Context.DefValue(pkgId, mod.name, dfnName),
         ).checkDValue(dfn)
       case (dfnName, DTypeSyn(params, replacementTyp)) =>
         val env =
@@ -427,8 +422,6 @@ private[validation] object Typing {
       ctx: Context,
       tVars: Map[TypeVarName, Kind] = Map.empty,
       eVars: Map[ExprVarName, Type] = Map.empty,
-      externalCallVars: Map[ExprVarName, List[SerializabilityRequirement]] = Map.empty,
-      currentValue: Option[(Identifier, Type)] = None,
   ) {
 
     private[lf] def TTuple2(t1: Type, t2: Type) =
@@ -454,27 +447,191 @@ private[validation] object Typing {
         throw ETypeMismatch(ctx, foundType = exprType, expectedType = typ, expr = Some(expr))
     }
 
-    private[lf] def typeOfTopExpr(exp: Expr): Type = // testing entry point
+    private def checkExternalCallUsages(expr: Expr): Unit = {
+      @tailrec
+      def stripLocations(expr: Expr): Expr =
+        expr match {
+          case ELocation(_, body) => stripLocations(body)
+          case other => other
+        }
+
+      sealed trait ExternalCallUsageWork
+      final case class CheckExpr(expr: Expr) extends ExternalCallUsageWork
+      final case class CheckUpdate(update: Update) extends ExternalCallUsageWork
+
+      def exprs(exprs: IterableOnce[Expr]): List[ExternalCallUsageWork] =
+        exprs.iterator.map(CheckExpr.apply).toList
+
+      @tailrec
+      def go(work: List[ExternalCallUsageWork]): Unit =
+        work match {
+          case Nil => ()
+          case CheckExpr(expr0) :: rest =>
+            stripLocations(expr0) match {
+              case expr =>
+                matchExternalCall(expr) match {
+                  case Some((inputType, outputType, args)) =>
+                    checkExternalCallType(SRExternalCallInput, inputType)
+                    checkExternalCallType(SRExternalCallOutput, outputType)
+                    go(exprs(args) ::: rest)
+                  case None =>
+                    expr match {
+                      case EBuiltinFun(BExternalCall) =>
+                        throw EUnsupportedExternalCallUsage(ctx)
+                      case EVar(_) | EVal(_) | EBuiltinFun(_) | EBuiltinCon(_) | EBuiltinLit(_) |
+                          EEnumCon(_, _) | ENil(_) | ENone(_) | ETypeRep(_) |
+                          EExperimental(_, _) =>
+                        go(rest)
+                      case ELocation(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case ERecCon(_, fields) =>
+                        go(exprs(fields.iterator.map(_._2)) ::: rest)
+                      case ERecProj(_, _, record) =>
+                        go(CheckExpr(record) :: rest)
+                      case ERecUpd(_, _, record, update) =>
+                        go(CheckExpr(record) :: CheckExpr(update) :: rest)
+                      case EVariantCon(_, _, arg) =>
+                        go(CheckExpr(arg) :: rest)
+                      case EStructCon(fields) =>
+                        go(exprs(fields.iterator.map(_._2)) ::: rest)
+                      case EStructProj(_, struct) =>
+                        go(CheckExpr(struct) :: rest)
+                      case EStructUpd(_, struct, update) =>
+                        go(CheckExpr(struct) :: CheckExpr(update) :: rest)
+                      case EApp(fun, arg) =>
+                        go(CheckExpr(fun) :: CheckExpr(arg) :: rest)
+                      case ETyApp(body, _) =>
+                        go(CheckExpr(body) :: rest)
+                      case EAbs(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case ETyAbs(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case ECase(scrut, alts) =>
+                        go(CheckExpr(scrut) :: exprs(alts.iterator.map(_.expr)) ::: rest)
+                      case ELet(binding, body) =>
+                        go(CheckExpr(binding.bound) :: CheckExpr(body) :: rest)
+                      case ECons(_, front, tail) =>
+                        go(exprs(front.iterator) ::: CheckExpr(tail) :: rest)
+                      case ESome(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EToAny(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EFromAny(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EThrow(_, _, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EToAnyException(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EFromAnyException(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EToInterface(_, _, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EFromInterface(_, _, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EUnsafeFromInterface(_, _, cid, body) =>
+                        go(CheckExpr(cid) :: CheckExpr(body) :: rest)
+                      case ECallInterface(_, _, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EToRequiredInterface(_, _, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EFromRequiredInterface(_, _, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EUnsafeFromRequiredInterface(_, _, cid, body) =>
+                        go(CheckExpr(cid) :: CheckExpr(body) :: rest)
+                      case EInterfaceTemplateTypeRep(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case ESignatoryInterface(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EObserverInterface(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EUpdate(update) =>
+                        go(CheckUpdate(update) :: rest)
+                      case EViewInterface(_, body) =>
+                        go(CheckExpr(body) :: rest)
+                      case EChoiceController(_, _, contract, choiceArg) =>
+                        go(CheckExpr(contract) :: CheckExpr(choiceArg) :: rest)
+                      case EChoiceObserver(_, _, contract, choiceArg) =>
+                        go(CheckExpr(contract) :: CheckExpr(choiceArg) :: rest)
+                    }
+                }
+            }
+          case CheckUpdate(update) :: rest =>
+            update match {
+              case UpdatePure(_, body) =>
+                go(CheckExpr(body) :: rest)
+              case UpdateBlock(bindings, body) =>
+                go(exprs(bindings.iterator.map(_.bound)) ::: CheckExpr(body) :: rest)
+              case UpdateCreate(_, arg) =>
+                go(CheckExpr(arg) :: rest)
+              case UpdateCreateInterface(_, arg) =>
+                go(CheckExpr(arg) :: rest)
+              case UpdateFetchTemplate(_, contractId) =>
+                go(CheckExpr(contractId) :: rest)
+              case UpdateFetchInterface(_, contractId) =>
+                go(CheckExpr(contractId) :: rest)
+              case UpdateExercise(_, _, contractId, arg) =>
+                go(CheckExpr(contractId) :: CheckExpr(arg) :: rest)
+              case UpdateExerciseInterface(_, _, contractId, arg, guard) =>
+                go(CheckExpr(contractId) :: CheckExpr(arg) :: exprs(guard) ::: rest)
+              case UpdateExerciseByKey(_, _, key, arg) =>
+                go(CheckExpr(key) :: CheckExpr(arg) :: rest)
+              case UpdateGetTime =>
+                go(rest)
+              case UpdateLedgerTimeLT(time) =>
+                go(CheckExpr(time) :: rest)
+              case UpdateFetchByKey(_) | UpdateQueryNByKey(_) | UpdateLookupByKey(_) =>
+                go(rest)
+              case UpdateEmbedExpr(_, body) =>
+                go(CheckExpr(body) :: rest)
+              case UpdateTryCatchV1(_, body, _, handler) =>
+                go(CheckExpr(body) :: CheckExpr(handler) :: rest)
+            }
+        }
+
+      def matchExternalCall(expr: Expr): Option[(Type, Type, List[Expr])] = {
+        val (headWithTypes, termArgs) = collectTermApps(expr, Nil)
+        val (head, typeArgs) = collectTypeApps(headWithTypes, Nil)
+        (stripLocations(head), typeArgs, termArgs) match {
+          case (EBuiltinFun(BExternalCall), List(inputType, outputType), args @ List(_, _, _, _)) =>
+            Some((inputType, outputType, args))
+          case _ =>
+            None
+        }
+      }
+
+      @tailrec
+      def collectTermApps(expr: Expr, args: List[Expr]): (Expr, List[Expr]) =
+        stripLocations(expr) match {
+          case EApp(fun, arg) => collectTermApps(fun, arg :: args)
+          case other => (other, args)
+        }
+
+      @tailrec
+      def collectTypeApps(expr: Expr, args: List[Type]): (Expr, List[Type]) =
+        stripLocations(expr) match {
+          case ETyApp(body, typ) => collectTypeApps(body, typ :: args)
+          case other => (other, args)
+        }
+
+      go(CheckExpr(expr) :: Nil)
+    }
+
+    private[lf] def typeOfTopExpr(exp: Expr): Type = { // testing entry point
       // stack-safe type-computation for TOP-LEVEL expressions
       // must *NOT* be used for sub-expressions
+      checkExternalCallUsages(exp)
       runWork(typeOfExpr(exp))
+    }
 
     /* Env Ops */
 
     private def introTypeVar(v: TypeVarName, k: Kind): Env =
       copy(tVars = tVars + (v -> k))
 
-    private def introExprVar(x: ExprVarName, t: Type): Env =
-      copy(eVars = eVars + (x -> t), externalCallVars = externalCallVars - x)
+    private def introExprVar(x: ExprVarName, t: Type): Env = copy(eVars = eVars + (x -> t))
 
     private def introExprVar(xOpt: Option[ExprVarName], t: Type): Env =
       xOpt.fold(this)(introExprVar(_, t))
-
-    private def introExternalCallExprVar(
-        x: ExprVarName,
-        requirements: List[SerializabilityRequirement],
-    ): Env =
-      copy(externalCallVars = externalCallVars + (x -> requirements))
 
     private def newLocation(loc: Location): Env =
       copy(ctx = Context.Location(loc))
@@ -933,21 +1090,16 @@ private[validation] object Typing {
         }
       }
 
-    private def typeOfTyApp(expr: Expr, typs: List[Type]): Work[Type] = {
-      def checkExternalCallType(requirement: SerializabilityRequirement, typ: Type): Unit = {
-        val typExpanded = expandTypeSynonyms(typ)
-        val serializableTypeVars =
-          if (isTrustedExternalCallWrapperContext)
-            tVars.collect { case (name, KStar) => name }.toSet
-          else
-            Set.empty[TypeVarName]
-        Serializability
-          .Env(pkgInterface, ctx, requirement, typExpanded, vars = serializableTypeVars)
-          .checkType()
-        if (containsContractIdDeep(typExpanded))
-          throw EExpectedSerializableType(ctx, requirement, typExpanded, URContractId)
-      }
+    private def checkExternalCallType(requirement: SerializabilityRequirement, typ: Type): Unit = {
+      val typExpanded = expandTypeSynonyms(typ)
+      Serializability
+        .Env(pkgInterface, ctx, requirement, typExpanded, vars = Set.empty)
+        .checkType()
+      if (containsContractIdDeep(typExpanded))
+        throw EExpectedSerializableType(ctx, requirement, typExpanded, URContractId)
+    }
 
+    private def typeOfTyApp(expr: Expr, typs: List[Type]): Work[Type] = {
       def externalCallTypeRequirements(expr: Expr): List[(SerializabilityRequirement, Type)] =
         externalCallRemainingTypeRequirements(expr).zip(typs)
 
@@ -981,10 +1133,6 @@ private[validation] object Typing {
       expr match {
         case EBuiltinFun(BExternalCall) =>
           List(SRExternalCallInput, SRExternalCallOutput)
-        case EVar(varName) =>
-          externalCallVars.getOrElse(varName, Nil)
-        case EVal(ref) if isExternalCallWrapperValue(ref) =>
-          List(SRExternalCallInput, SRExternalCallOutput)
         case ELocation(_, body) =>
           externalCallRemainingTypeRequirements(body)
         case ETyAbs(_, body) =>
@@ -993,35 +1141,6 @@ private[validation] object Typing {
           externalCallRemainingTypeRequirements(body).drop(1)
         case _ =>
           Nil
-      }
-
-    private def isExternalCallBody(body: Type, inputType: Type, outputType: Type): Boolean =
-      body == (TText ->: TText ->: TText ->: inputType ->: TUpdate(outputType))
-
-    private def isTrustedExternalCallWrapperContext: Boolean =
-      currentValue.exists { case (identifier, typ) =>
-        identifier.qualifiedName.module == Typing.daExternalModule &&
-        identifier.qualifiedName.name == Typing.externalCallName &&
-        isCanonicalExternalCallWrapperType(typ)
-      }
-
-    private def isCanonicalExternalCallWrapperType(typ: Type): Boolean =
-      expandTypeSynonyms(typ) match {
-        case TForall((inputVar, KStar), TForall((outputVar, KStar), body)) =>
-          isExternalCallBody(dropExternalCallContextArgs(body), TVar(inputVar), TVar(outputVar))
-        case _ => false
-      }
-
-    private def isExternalCallWrapperValue(ref: ValueRef): Boolean =
-      ref.qualifiedName.module == Typing.daExternalModule &&
-        ref.qualifiedName.name == Typing.externalCallName
-
-    @tailrec
-    private def dropExternalCallContextArgs(typ: Type): Type =
-      expandTypeSynonyms(typ) match {
-        case TFun(arg, body) if expandTypeSynonyms(arg) != TText =>
-          dropExternalCallContextArgs(body)
-        case other => other
       }
 
     private def containsContractIdDeep(typ: Type): Boolean =
@@ -1219,13 +1338,7 @@ private[validation] object Typing {
       case Binding(Some(vName), typ0, expr) =>
         checkType(typ0, KStar)
         resolveExprType(expr, typ0) { typ1 =>
-          val externalCallReqs = externalCallRemainingTypeRequirements(expr)
-          val bodyEnv =
-            if (externalCallReqs.nonEmpty)
-              introExprVar(vName, typ1).introExternalCallExprVar(vName, externalCallReqs)
-            else
-              introExprVar(vName, typ1)
-          bodyEnv.typeOf(body) { ty =>
+          introExprVar(vName, typ1).typeOf(body) { ty =>
             Ret(ty)
           }
         }

@@ -340,14 +340,20 @@ final class TypingSpec extends AnyWordSpec with TableDrivenPropertyChecks with M
         E"""λ (input: Text) → (( EXTERNAL_CALL @Text @Mod:CidBox "ext" "fun" "00" input ))""",
         E"""λ (box: Mod:PolyBox (ContractId Mod:T)) → (( EXTERNAL_CALL @(Mod:PolyBox (ContractId Mod:T)) @Text "ext" "fun" "00" box ))""",
         E"""λ (cid: ContractId Mod:T) → (( ⸨ EXTERNAL_CALL ⸩ @(ContractId Mod:T) @Text "ext" "fun" "00" cid ))""",
-        E"""λ (cid: ContractId Mod:T) →
-             (( let f : ∀ (input : ⋆) (output : ⋆). Text → Text → Text → input → Update output = EXTERNAL_CALL
-                in f @(ContractId Mod:T) @Text "ext" "fun" "00" cid ))""",
       )
 
       forEvery(testCases) { exp =>
         an[EExpectedSerializableType] shouldBe thrownBy(env.typeOfTopExpr(exp))
       }
+    }
+
+    "reject local aliases to EXTERNAL_CALL" in {
+      val exp =
+        E"""λ (cid: ContractId Mod:T) →
+             (( let f : ∀ (input : ⋆) (output : ⋆). Text → Text → Text → input → Update output = EXTERNAL_CALL
+                in f @(ContractId Mod:T) @Text "ext" "fun" "00" cid ))"""
+
+      an[EUnsupportedExternalCallUsage] shouldBe thrownBy(env.typeOfTopExpr(exp))
     }
 
     "do not apply external call requirements to unrelated functions with the same type" in {
@@ -372,14 +378,16 @@ final class TypingSpec extends AnyWordSpec with TableDrivenPropertyChecks with M
       }
     }
 
-    "allow the canonical DA.External.externalCall wrapper to use quantified type variables" in {
-      checkDaExternalExternalCall(
-        T"∀ (input : ⋆) (output : ⋆). Bool → Bool → Text → Text → Text → input → Update output",
-        E"""Λ (input : ⋆) (output : ⋆).
-             λ (_serializableInput : Bool) (_serializableOutput : Bool)
-               (extensionId : Text) (functionId : Text) (configHex : Text) (inputValue : input) →
-               ⸨ EXTERNAL_CALL @input @output extensionId functionId configHex inputValue ⸩""",
-      )
+    "reject DA.External.externalCall wrappers instead of trusting names" in {
+      an[EExpectedSerializableType] shouldBe thrownBy {
+        checkDaExternalExternalCall(
+          T"∀ (input : ⋆) (output : ⋆). Bool → Bool → Text → Text → Text → input → Update output",
+          E"""Λ (input : ⋆) (output : ⋆).
+               λ (_serializableInput : Bool) (_serializableOutput : Bool)
+                 (extensionId : Text) (functionId : Text) (configHex : Text) (inputValue : input) →
+                 ⸨ EXTERNAL_CALL @input @output extensionId functionId configHex inputValue ⸩""",
+        )
+      }
     }
 
     "reject non-canonical DA.External.externalCall wrappers" in {
@@ -390,6 +398,16 @@ final class TypingSpec extends AnyWordSpec with TableDrivenPropertyChecks with M
                EXTERNAL_CALL @input @Text "ext" "fun" "00" inputValue""",
         )
       }
+    }
+
+    "does not apply external call requirements to unrelated wrappers with the same name" in {
+      checkDaExternalExternalCall(
+        T"∀ (input : ⋆) (output : ⋆). Bool → Bool → Text → Text → Text → input → Update output",
+        E"""Λ (input : ⋆) (output : ⋆).
+             λ (_serializableInput : Bool) (_serializableOutput : Bool)
+               (extensionId : Text) (functionId : Text) (configHex : Text) (inputValue : input) →
+               ERROR @(Update output) "not compiler-lowered" """,
+      )
     }
 
     "not reject exhaustive patterns" in {

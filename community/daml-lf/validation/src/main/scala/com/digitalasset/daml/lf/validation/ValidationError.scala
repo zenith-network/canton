@@ -319,6 +319,10 @@ final case class EExpectedSerializableType(
        | * problem: ${requirement.pretty}
      """.stripMargin
 }
+final case class EUnsupportedExternalCallUsage(context: Context) extends ValidationError {
+  protected def prettyInternal: String =
+    "EXTERNAL_CALL must be used directly with two type arguments and four value arguments"
+}
 final case class EEmptyCase(context: Context) extends ValidationError {
   protected def prettyInternal: String = "empty case"
 }
