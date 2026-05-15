@@ -92,10 +92,11 @@ final class LegacyTransactionTreeFactoryTest
     s"TransactionTreeFactoryImpl for contract ID version $contractIdVersion" should {
 
       def createTransactionTreeFactory(
-          exampleFactory: ExampleTransactionFactory = factory
+          exampleFactory: ExampleTransactionFactory = factory,
+          participantId: ParticipantId = ExampleTransactionFactory.submittingParticipant,
       ): TransactionTreeFactory =
         new LegacyTransactionTreeFactory(
-          ExampleTransactionFactory.submittingParticipant,
+          participantId,
           exampleFactory.psid,
           exampleFactory.cantonContractIdVersion,
           exampleFactory.cryptoOps,
@@ -177,6 +178,59 @@ final class LegacyTransactionTreeFactoryTest
                 ExampleTransactionFactory.submitter,
                 ExampleTransactionFactory.signatory,
               )
+            }
+          }
+
+          "reconstruct root external call records with the submitting participant admin party" in {
+            val devFactory = new ExampleTransactionFactory(
+              versionOverride = Some(ProtocolVersion.dev)
+            )(
+              psid = factory.psid.copy(protocolVersion = ProtocolVersion.dev),
+              cantonContractIdVersion = contractIdVersion,
+            )
+            val submittingTreeFactory = createTransactionTreeFactory(devFactory)
+            val validatingTreeFactory = createTransactionTreeFactory(
+              devFactory,
+              ExampleTransactionFactory.observerParticipant,
+            )
+            val example = devFactory.SingleExercise(devFactory.deriveNodeSeed(0))
+            val transaction =
+              withExternalCallResults(example, LfNodeId(0), ImmArray(externalCallResult))
+
+            createTransactionTree(
+              submittingTreeFactory,
+              transaction,
+              successfulLookup(example),
+              example.keyResolver.asCidOptionMap,
+              snapshot = devFactory.topologySnapshot,
+              exampleFactory = devFactory,
+            ).value.flatMap { result =>
+              val tree = result.value
+              val submittedView = tree.rootViews.unblindedElements.loneElement
+
+              validatingTreeFactory
+                .tryReconstruct(
+                  transaction = transaction,
+                  rootPosition = tree.viewPosition(submittedView.viewHash.toRootHash).value,
+                  mediator = devFactory.mediatorGroup,
+                  submittingParticipantO = Some(ExampleTransactionFactory.submittingParticipant),
+                  salts = submittingTreeFactory.saltsFromView(submittedView),
+                  transactionUuid = devFactory.transactionUuid,
+                  topologySnapshot = devFactory.topologySnapshot,
+                  contractOfId = successfulLookup(example),
+                  rbContext = RollbackContext.empty,
+                  legacyKeyResolver = example.keyResolver,
+                  absolutizer = devFactory.absolutizer(tree.updateId),
+                )
+                .failOnShutdown
+                .value
+                .map { reconstruction =>
+                  val (reconstructedView, _) = reconstruction.value
+                  val record =
+                    reconstructedView.viewParticipantData.tryUnwrap.externalCallResults.toSeq.loneElement
+
+                  record.checkingParties shouldBe Set(ExampleTransactionFactory.submitter)
+                }
             }
           }
         }

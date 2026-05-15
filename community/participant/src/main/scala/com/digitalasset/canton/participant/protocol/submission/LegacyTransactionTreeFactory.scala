@@ -126,12 +126,14 @@ class LegacyTransactionTreeFactory(
       protocolVersion,
     )
 
+    val submittingAdminParty = participantId.adminParty.toLf
+
     val rootViewDecompositionsF =
       transactionViewDecompositionFactory.fromTransaction(
         topologySnapshot,
         transaction,
         RollbackContext.empty,
-        Some(participantId.adminParty.toLf),
+        Some(submittingAdminParty),
       )
 
     val commonMetadata = CommonMetadata
@@ -183,6 +185,7 @@ class LegacyTransactionTreeFactory(
         contractOfId,
         topologySnapshot,
         transaction.unwrap.roots.toSeq.toSet,
+        Some(submittingAdminParty),
       )
 
       _ <-
@@ -260,6 +263,7 @@ class LegacyTransactionTreeFactory(
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
       originalRootNodeIds: Set[LfNodeId],
+      submittingAdminPartyO: Option[LfPartyId],
   )(implicit
       traceContext: TraceContext
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, Seq[TransactionView]] = {
@@ -309,6 +313,7 @@ class LegacyTransactionTreeFactory(
             fromPreloaded,
             topologySnapshot,
             originalRootNodeIds,
+            submittingAdminPartyO,
           )
         }
       }
@@ -321,6 +326,7 @@ class LegacyTransactionTreeFactory(
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
       originalRootNodeIds: Set[LfNodeId],
+      submittingAdminPartyO: Option[LfPartyId],
   )(implicit
       traceContext: TraceContext
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, TransactionView] = {
@@ -366,6 +372,7 @@ class LegacyTransactionTreeFactory(
             contractOfId,
             topologySnapshot,
             originalRootNodeIds,
+            submittingAdminPartyO,
           )
             .map { v =>
               childViewsBuilder += v
@@ -478,6 +485,7 @@ class LegacyTransactionTreeFactory(
         contractOfId,
         view.rbContext,
         originalRootNodeIds,
+        submittingAdminPartyO,
       )
 
       // fast-forward the former state over the subtree
@@ -754,6 +762,7 @@ class LegacyTransactionTreeFactory(
       contractOfId: ContractInstanceOfId,
       rbContextCore: RollbackContext,
       originalRootNodeIds: Set[LfNodeId],
+      submittingAdminPartyO: Option[LfPartyId],
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
 
     val consumedInCore =
@@ -827,6 +836,7 @@ class LegacyTransactionTreeFactory(
               coreOtherNodes,
               childViews,
               originalRootNodeIds,
+              submittingAdminPartyO,
             ),
           )
         )
@@ -838,6 +848,7 @@ class LegacyTransactionTreeFactory(
       coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackScope)],
       childViews: Seq[TransactionView],
       originalRootNodeIds: Set[LfNodeId],
+      submittingAdminPartyO: Option[LfPartyId],
   ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
     val coreExternalCallResults = coreOtherNodes.flatMap {
       case (nodeId, exercise: LfNodeExercises, _) =>
@@ -846,7 +857,12 @@ class LegacyTransactionTreeFactory(
             result = result,
             nodeId = nodeId,
             callIndex = callIndex,
-            checkingParties = checkingPartiesForNode(nodeId, exercise, originalRootNodeIds),
+            checkingParties = checkingPartiesForNode(
+              nodeId,
+              exercise,
+              originalRootNodeIds,
+              submittingAdminPartyO,
+            ),
           )
         }
       case _ => Seq.empty
@@ -859,9 +875,11 @@ class LegacyTransactionTreeFactory(
       nodeId: LfNodeId,
       node: LfActionNode,
       originalRootNodeIds: Set[LfNodeId],
+      submittingAdminPartyO: Option[LfPartyId],
   ): Set[LfPartyId] =
     Option
-      .when(originalRootNodeIds.contains(nodeId))(participantId.adminParty.toLf)
+      .when(originalRootNodeIds.contains(nodeId))(submittingAdminPartyO)
+      .flatten
       .fold[Set[LfPartyId]](Set.empty)(party => Set(party)) |
       LfTransactionUtil.signatoriesOrMaintainers(node) |
       LfTransactionUtil.actingParties(node)
@@ -955,12 +973,14 @@ class LegacyTransactionTreeFactory(
       legacyKeyResolver.asCidOptionMap,
     )
 
+    val submittingAdminPartyO = submittingParticipantO.map(_.adminParty.toLf)
+
     val decompositionsF =
       transactionViewDecompositionFactory.fromTransaction(
         topologySnapshot,
         transaction,
         rbContext,
-        submittingParticipantO.map(_.adminParty.toLf),
+        submittingAdminPartyO,
       )
     for {
       decompositions <- EitherT.right(decompositionsF)
@@ -972,6 +992,7 @@ class LegacyTransactionTreeFactory(
         contractOfId,
         topologySnapshot,
         transaction.unwrap.roots.toSeq.toSet,
+        submittingAdminPartyO,
       )
       suffixedNodes = state.suffixedNodes() transform {
         // Recover the children
