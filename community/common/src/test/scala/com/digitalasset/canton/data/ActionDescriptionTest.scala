@@ -50,7 +50,7 @@ class ActionDescriptionTest extends AnyWordSpec with BaseTest {
           Right(expected)
       }
 
-      "an exercise node with external call results is presented" in {
+      "an exercise node with external call results ignores them" in {
         val externalCallResults = ImmArray(
           ExternalCallResult(
             extensionId = "extension",
@@ -74,8 +74,14 @@ class ActionDescriptionTest extends AnyWordSpec with BaseTest {
             Set.empty,
           )
           .asInstanceOf[ExerciseActionDescription]
+        val expected = ActionDescription
+          .tryFromLfActionNode(
+            node.copy(externalCallResults = ImmArray.Empty),
+            Some(seed),
+            Set.empty,
+          )
 
-        description.externalCallResults shouldBe externalCallResults
+        description shouldBe expected
         ActionDescription.fromProtoV30(description.toProtoV30).value shouldBe description
         ActionDescription.fromProtoV31(description.toProtoV31).value shouldBe description
       }

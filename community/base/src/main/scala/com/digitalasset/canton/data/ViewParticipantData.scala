@@ -15,7 +15,7 @@ import com.digitalasset.canton.data.ActionDescription.{
 import com.digitalasset.canton.data.ViewParticipantData.{InvalidViewParticipantData, RootAction}
 import com.digitalasset.canton.logging.pretty.Pretty
 import com.digitalasset.canton.protocol.ContractIdSyntax.*
-import com.digitalasset.canton.protocol.{v30, *}
+import com.digitalasset.canton.protocol.{v30, v31, v32, *}
 import com.digitalasset.canton.serialization.ProtoConverter.ParsingResult
 import com.digitalasset.canton.serialization.{
   ProtoConverter,
@@ -37,6 +37,8 @@ import com.digitalasset.canton.{
   ProtoDeserializationError,
   checked,
 }
+import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
+import com.digitalasset.daml.lf.transaction.ExternalCallResult
 import com.google.common.annotations.VisibleForTesting
 import com.google.protobuf.ByteString
 import monocle.Lens
@@ -69,6 +71,8 @@ import scala.math.Ordered.orderingToOrdered
   *   The description of the root action of the view
   * @param rollbackContext
   *   The rollback context of the root action of the view.
+  * @param externalCallResults
+  *   External call results recorded by exercise nodes in the core of this view.
   * @throws ViewParticipantData$.InvalidViewParticipantData
   *   if [[createdCore]] contains two elements with the same contract id, if
   *   [[coreInputs]]`(id).contractId != id` if [[createdInSubviewArchivedInCore]] overlaps with
@@ -84,6 +88,7 @@ final case class ViewParticipantData private (
     actionDescription: ActionDescription,
     rollbackContext: RollbackContext,
     salt: Salt,
+    externalCallResults: ImmArray[ViewParticipantData.ViewExternalCallResult],
 )(
     hashOps: HashOps,
     override val representativeProtocolVersion: RepresentativeProtocolVersion[
@@ -127,6 +132,19 @@ final case class ViewParticipantData private (
       throw InvalidViewParticipantData(
         s"Contract created in a subview are also created in the core: $transientOverlap"
       )
+
+    if (
+      externalCallResults.nonEmpty &&
+      representativeProtocolVersion.representative != ProtocolVersion.dev
+    )
+      throw InvalidViewParticipantData(
+        s"External call results are supported only in protocol version ${ProtocolVersion.dev}"
+      )
+
+    externalCallResults.foreach { result =>
+      if (result.nodeId.index < 0)
+        throw InvalidViewParticipantData(s"Negative external call node id: ${result.nodeId.index}")
+    }
 
   }
 
@@ -196,7 +214,6 @@ final case class ViewParticipantData private (
             byKey,
             _seed,
             failed,
-            _externalCallResults,
           ) =>
         val inputContract = coreInputs.getOrElse(
           inputContractId,
@@ -318,6 +335,19 @@ final case class ViewParticipantData private (
     salt = Some(salt.toProtoV30),
   )
 
+  private[ViewParticipantData] def toProtoV32: v32.ViewParticipantData = v32.ViewParticipantData(
+    coreInputs = coreInputs.values.map(_.toProtoV30).toSeq,
+    createdCore = createdCore.map(_.toProtoV30),
+    createdInSubviewArchivedInCore = createdInSubviewArchivedInCore.toSeq.map(_.toProtoPrimitive),
+    resolvedKeys = keyResolution.toList.map { case (k, v) =>
+      KeyResolutionWithMaintainers.toProtoV32(k, v)
+    },
+    actionDescription = Some(actionDescription.toProtoV31),
+    rollbackContext = if (rollbackContext.isEmpty) None else Some(rollbackContext.toProtoV30),
+    salt = Some(salt.toProtoV30),
+    externalCallResults = externalCallResults.toSeq.map(_.toProtoV32),
+  )
+
   override protected[this] def toByteStringUnmemoized: ByteString =
     super[HasProtocolVersionedWrapper].toByteString
 
@@ -343,6 +373,8 @@ final case class ViewParticipantData private (
       actionDescription: ActionDescription = this.actionDescription,
       rollbackContext: RollbackContext = this.rollbackContext,
       salt: Salt = this.salt,
+      externalCallResults: ImmArray[ViewParticipantData.ViewExternalCallResult] =
+        this.externalCallResults,
   ): ViewParticipantData =
     ViewParticipantData(
       coreInputs,
@@ -352,6 +384,7 @@ final case class ViewParticipantData private (
       actionDescription,
       rollbackContext,
       salt,
+      externalCallResults,
     )(hashOps, representativeProtocolVersion, None)
 }
 
@@ -367,6 +400,10 @@ object ViewParticipantData
     ProtoVersion(31) -> VersionedProtoCodec(ProtocolVersion.v35)(v31.ViewParticipantData)(
       supportedProtoVersionMemoized(_)(fromProtoV31),
       _.toProtoV31,
+    ),
+    ProtoVersion(32) -> VersionedProtoCodec(ProtocolVersion.dev)(v32.ViewParticipantData)(
+      supportedProtoVersionMemoized(_)(fromProtoV32),
+      _.toProtoV32,
     ),
   )
 
@@ -400,6 +437,7 @@ object ViewParticipantData
       rollbackContext: RollbackContext,
       salt: Salt,
       protocolVersion: ProtocolVersion,
+      externalCallResults: ImmArray[ViewExternalCallResult] = ImmArray.Empty,
   ): ViewParticipantData =
     ViewParticipantData(
       coreInputs,
@@ -409,6 +447,7 @@ object ViewParticipantData
       actionDescription,
       rollbackContext,
       salt,
+      externalCallResults,
     )(hashOps, protocolVersionRepresentativeFor(protocolVersion), None)
 
   /** Creates a view participant data.
@@ -437,6 +476,7 @@ object ViewParticipantData
       rollbackContext: RollbackContext,
       salt: Salt,
       protocolVersion: ProtocolVersion,
+      externalCallResults: ImmArray[ViewExternalCallResult] = ImmArray.Empty,
   ): Either[String, ViewParticipantData] =
     returnLeftWhenInitializationFails(
       ViewParticipantData.tryCreate(hashOps)(
@@ -448,6 +488,7 @@ object ViewParticipantData
         rollbackContext,
         salt,
         protocolVersion,
+        externalCallResults,
       )
     )
 
@@ -492,6 +533,7 @@ object ViewParticipantData
         createdCoreP,
         createdInSubviewArchivedInCoreP,
         rbContextP,
+        ImmArray.Empty,
       )
     } yield {
       viewParticipantData
@@ -523,6 +565,45 @@ object ViewParticipantData
         createdCoreP,
         createdInSubviewArchivedInCoreP,
         rbContextP,
+        ImmArray.Empty,
+      )
+    } yield viewParticipantData
+  }
+
+  private def fromProtoV32(hashOps: HashOps, dataP: v32.ViewParticipantData)(
+      bytes: ByteString
+  ): ParsingResult[ViewParticipantData] = {
+    val v32.ViewParticipantData(
+      saltP,
+      coreInputsP,
+      createdCoreP,
+      createdInSubviewArchivedInCoreP,
+      resolvedKeysP,
+      actionDescriptionP,
+      rbContextP,
+      externalCallResultsP,
+    ) = dataP
+
+    for {
+      resolvedKeys <- resolvedKeysP.traverse(KeyResolutionWithMaintainers.fromProtoV32)
+      actionDescription <- ProtoConverter
+        .required("action_description", actionDescriptionP)
+        .flatMap(ActionDescription.fromProtoV31)
+      externalCallResults <- externalCallResultsP.traverse(ViewExternalCallResult.fromProtoV32)
+      rpv <- protocolVersionRepresentativeFor(ProtoVersion(32))
+      viewParticipantData <- fromProto(
+        hashOps,
+        resolvedKeys.toMap,
+        actionDescription,
+        rpv,
+        bytes,
+      )(
+        saltP,
+        coreInputsP,
+        createdCoreP,
+        createdInSubviewArchivedInCoreP,
+        rbContextP,
+        ImmArray.from(externalCallResults),
       )
     } yield viewParticipantData
   }
@@ -539,6 +620,7 @@ object ViewParticipantData
       createdCoreP: Seq[v30.CreatedContract],
       createdInSubviewArchivedInCoreP: Seq[String],
       rollbackContextP: Option[v30.ViewParticipantData.RollbackContext],
+      externalCallResults: ImmArray[ViewExternalCallResult],
   ): ParsingResult[ViewParticipantData] =
     for {
       coreInputsSeq <- coreInputsP.traverse(InputContract.fromProtoV30)
@@ -563,6 +645,7 @@ object ViewParticipantData
           actionDescription = actionDescription,
           rollbackContext = rollbackContext,
           salt = salt,
+          externalCallResults = externalCallResults,
         )(hashOps, rpv, Some(bytes))
       ).leftMap(ProtoDeserializationError.OtherError.apply)
     } yield viewParticipantData
@@ -577,6 +660,78 @@ object ViewParticipantData
   /** Indicates an attempt to create an invalid [[ViewParticipantData]]. */
   final case class InvalidViewParticipantData(message: String) extends RuntimeException(message)
 
+  final case class ViewExternalCallResult(
+      result: ExternalCallResult,
+      nodeId: LfNodeId,
+      callIndex: Int,
+      checkingParties: Set[LfPartyId],
+  ) {
+    if (callIndex < 0) throw InvalidViewParticipantData(s"Negative call index: $callIndex")
+
+    private[data] def semanticIdentity: (String, String, Bytes, Bytes) =
+      (result.extensionId, result.functionId, result.config, result.input)
+
+    private[data] def exactResult: (String, String, Bytes, Bytes, Bytes) =
+      (result.extensionId, result.functionId, result.config, result.input, result.output)
+
+    private[canton] def isCoveredBy(other: ViewExternalCallResult): Boolean =
+      exactResult == other.exactResult && checkingParties.subsetOf(other.checkingParties)
+
+    private[ViewParticipantData] def toProtoV32: v32.ViewExternalCallResult =
+      v32.ViewExternalCallResult(
+        extensionId = result.extensionId,
+        functionId = result.functionId,
+        config = result.config.toByteString,
+        input = result.input.toByteString,
+        output = result.output.toByteString,
+        nodeId = nodeId.index,
+        callIndex = callIndex,
+        checkingParties = checkingParties.toSeq,
+      )
+  }
+
+  object ViewExternalCallResult {
+    def fromProtoV32(
+        resultP: v32.ViewExternalCallResult
+    ): ParsingResult[ViewExternalCallResult] = {
+      val v32.ViewExternalCallResult(
+        extensionId,
+        functionId,
+        config,
+        input,
+        output,
+        nodeIdP,
+        callIndex,
+        checkingPartiesP,
+      ) = resultP
+      for {
+        nodeId <- Either.cond(
+          nodeIdP >= 0,
+          LfNodeId(nodeIdP),
+          ProtoDeserializationError.OtherError(s"Negative external call node_id: $nodeIdP"),
+        )
+        _ <- Either.cond(
+          callIndex >= 0,
+          (),
+          ProtoDeserializationError.OtherError(s"Negative external call call_index: $callIndex"),
+        )
+        checkingParties <- checkingPartiesP
+          .traverse(ProtoConverter.parseLfPartyId(_, field = "checking_parties"))
+      } yield ViewExternalCallResult(
+        result = ExternalCallResult(
+          extensionId = extensionId,
+          functionId = functionId,
+          config = Bytes.fromByteString(config),
+          input = Bytes.fromByteString(input),
+          output = Bytes.fromByteString(output),
+        ),
+        nodeId = nodeId,
+        callIndex = callIndex,
+        checkingParties = checkingParties.toSet,
+      )
+    }
+  }
+
   /** DO NOT USE IN PRODUCTION, as it does not necessarily check object invariants. */
   @VisibleForTesting
   object Optics {
@@ -588,6 +743,8 @@ object ViewParticipantData
       GenLens[ViewParticipantData](_.actionDescription)
     val saltUnsafe: Lens[ViewParticipantData, Salt] =
       GenLens[ViewParticipantData](_.salt)
+    val externalCallResultsUnsafe: Lens[ViewParticipantData, ImmArray[ViewExternalCallResult]] =
+      GenLens[ViewParticipantData](_.externalCallResults)
   }
 
 }

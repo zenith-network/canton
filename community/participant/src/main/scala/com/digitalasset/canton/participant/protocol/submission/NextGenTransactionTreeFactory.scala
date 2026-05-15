@@ -31,6 +31,7 @@ import com.digitalasset.canton.tracing.TraceContext
 import com.digitalasset.canton.util.PackageConsumer.PackageResolver
 import com.digitalasset.canton.util.collection.MapsUtil
 import com.digitalasset.canton.util.{ContractHasher, ErrorUtil, LfTransactionUtil, MonadUtil}
+import com.digitalasset.daml.lf.data.ImmArray
 import com.digitalasset.daml.lf.data.Ref.PackageId
 import com.digitalasset.daml.lf.transaction.CreationTime
 import io.scalaland.chimney.dsl.*
@@ -150,6 +151,7 @@ class NextGenTransactionTreeFactory(
         state,
         contractOfId,
         topologySnapshot,
+        transaction.unwrap.roots.toSeq.toSet,
       )
 
       _ <-
@@ -225,6 +227,7 @@ class NextGenTransactionTreeFactory(
       state: State,
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
+      originalRootNodeIds: Set[LfNodeId],
   )(implicit
       traceContext: TraceContext
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, Seq[TransactionView]] = {
@@ -276,6 +279,7 @@ class NextGenTransactionTreeFactory(
             state,
             fromPreloaded,
             topologySnapshot,
+            originalRootNodeIds,
           )
         }
       }
@@ -287,6 +291,7 @@ class NextGenTransactionTreeFactory(
       state: State,
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
+      originalRootNodeIds: Set[LfNodeId],
   )(implicit
       traceContext: TraceContext
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, TransactionView] = {
@@ -343,6 +348,7 @@ class NextGenTransactionTreeFactory(
             state,
             contractOfId,
             topologySnapshot,
+            originalRootNodeIds,
           )
             .map { v =>
               childViewsBuilder += v
@@ -402,12 +408,13 @@ class NextGenTransactionTreeFactory(
       // that was created in the consequences of the exercise, i.e., we know the suffix only
       // after we have visited the create node.
       coreOtherNodes = coreOtherBuilder.result().map { case (nodeInfo, rbc) =>
-        (checked(trySuffixNode(state)(nodeInfo)), rbc)
+        val (nodeId, _) = nodeInfo
+        (nodeId, checked(trySuffixNode(state)(nodeInfo)), rbc)
       }
       childViews = childViewsBuilder.result()
 
       suffixedRootNode: LfActionNode = coreOtherNodes.headOption
-        .map(_._1)
+        .map(_._2)
         .orElse(coreCreatedNodes.headOption)
         .getOrElse(
           throw new IllegalArgumentException(s"The received view has no core nodes. $view")
@@ -436,6 +443,7 @@ class NextGenTransactionTreeFactory(
         viewParticipantDataSalt,
         contractOfId,
         view.rbContext,
+        originalRootNodeIds,
       )
 
     } yield {
@@ -610,7 +618,7 @@ class NextGenTransactionTreeFactory(
 
   private def createViewParticipantData(
       coreCreatedNodes: List[LfNodeCreate],
-      coreOtherNodes: List[(LfActionNode, RollbackScope)],
+      coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackScope)],
       childViews: Seq[TransactionView],
       createdContractInfo: collection.Map[LfContractId, NewContractInstance],
       resolvedKeys: Map[LfGlobalKey, LfVersioned[KeyResolutionWithMaintainers]],
@@ -618,10 +626,11 @@ class NextGenTransactionTreeFactory(
       salt: Salt,
       contractOfId: ContractInstanceOfId,
       rbContextCore: RollbackContext,
+      originalRootNodeIds: Set[LfNodeId],
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
 
     val consumedInCore =
-      coreOtherNodes.flatMap { case (an, _) =>
+      coreOtherNodes.flatMap { case (_, an, _) =>
         LfTransactionUtil.consumedContractId(an)
       }.toSet
     val created = coreCreatedNodes.map { n =>
@@ -647,7 +656,7 @@ class NextGenTransactionTreeFactory(
     val createdInSameViewOrSubviews = createdInSubviews ++ created.map(_.contract.contractId)
 
     val coreInputs = coreOtherNodes.view
-      .flatMap { case (node, _) =>
+      .flatMap { case (_, node, _) =>
         LfTransactionUtil.usedContractId(node)
       }
       .filterNot(createdInSameViewOrSubviews.contains)
@@ -681,10 +690,67 @@ class NextGenTransactionTreeFactory(
             rollbackContext = rbContextCore,
             salt = salt,
             protocolVersion = protocolVersion,
+            externalCallResults = externalCallResultsFromCoreNodes(
+              coreOtherNodes,
+              childViews,
+              originalRootNodeIds,
+            ),
           )
         )
         .leftMap[TransactionTreeConversionError](ViewParticipantDataError.apply)
     } yield viewParticipantData
+  }
+
+  private def externalCallResultsFromCoreNodes(
+      coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackScope)],
+      childViews: Seq[TransactionView],
+      originalRootNodeIds: Set[LfNodeId],
+  ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
+    val coreExternalCallResults = coreOtherNodes.flatMap {
+      case (nodeId, exercise: LfNodeExercises, _) =>
+        exercise.externalCallResults.toSeq.zipWithIndex.map { case (result, callIndex) =>
+          ViewParticipantData.ViewExternalCallResult(
+            result = result,
+            nodeId = nodeId,
+            callIndex = callIndex,
+            checkingParties = checkingPartiesForNode(nodeId, exercise, originalRootNodeIds),
+          )
+        }
+      case _ => Seq.empty
+    }
+
+    suppressExternalCallResultsCoveredBySubviews(coreExternalCallResults, childViews)
+  }
+
+  private def checkingPartiesForNode(
+      nodeId: LfNodeId,
+      node: LfActionNode,
+      originalRootNodeIds: Set[LfNodeId],
+  ): Set[LfPartyId] =
+    Option
+      .when(originalRootNodeIds.contains(nodeId))(participantId.adminParty.toLf)
+      .fold[Set[LfPartyId]](Set.empty)(party => Set(party)) |
+      LfTransactionUtil.signatoriesOrMaintainers(node) |
+      LfTransactionUtil.actingParties(node)
+
+  private def suppressExternalCallResultsCoveredBySubviews(
+      coreExternalCallResults: Seq[ViewParticipantData.ViewExternalCallResult],
+      childViews: Seq[TransactionView],
+  ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
+    val coveredBySubviews = mutable.ArrayBuffer.from(
+      childViews
+        .flatMap(_.flatten)
+        .flatMap(_.viewParticipantData.tryUnwrap.externalCallResults.toSeq)
+    )
+    val retained = coreExternalCallResults.filterNot { externalCallResult =>
+      val coveredIndex = coveredBySubviews.indexWhere(externalCallResult.isCoveredBy)
+      if (coveredIndex >= 0) {
+        val _ = coveredBySubviews.remove(coveredIndex)
+        true
+      } else false
+    }
+
+    ImmArray.from(retained)
   }
 
   @SuppressWarnings(Array("org.wartremover.warts.IterableOps"))
@@ -749,6 +815,7 @@ class NextGenTransactionTreeFactory(
         state,
         contractOfId,
         topologySnapshot,
+        transaction.unwrap.roots.toSeq.toSet,
       )
       suffixedNodes = state.suffixedNodes() transform {
         // Recover the children

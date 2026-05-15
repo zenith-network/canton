@@ -13,10 +13,13 @@ import com.digitalasset.canton.version.ProtocolVersion
 import com.digitalasset.canton.{
   BaseTest,
   HasExecutionContext,
+  LfPartyId,
   LfPackageId,
   LfVersioned,
   ProtocolVersionChecksAnyWordSpec,
 }
+import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
+import com.digitalasset.daml.lf.transaction.ExternalCallResult
 import org.scalatest.wordspec.AnyWordSpec
 
 class TransactionViewTest
@@ -43,6 +46,26 @@ class TransactionViewTest
   private val nodeSeed: LfHash = ExampleTransactionFactory.lfHash(1)
 
   private val defaultPackagePreference = Set(ExampleTransactionFactory.packageId)
+  private val externalCallResult: ExternalCallResult =
+    ExternalCallResult(
+      extensionId = "extension",
+      functionId = "function",
+      config = Bytes.fromStringUtf8("config"),
+      input = Bytes.fromStringUtf8("input"),
+      output = Bytes.fromStringUtf8("output"),
+    )
+  private val otherExternalCallOutput: ExternalCallResult =
+    externalCallResult.copy(output = Bytes.fromStringUtf8("other-output"))
+  private val externalCallCheckingParties =
+    Set(ExampleTransactionFactory.submitter, ExampleTransactionFactory.signatory)
+
+  private def viewExternalCallResult(
+      nodeId: LfNodeId,
+      result: ExternalCallResult = externalCallResult,
+      callIndex: Int = 0,
+      checkingParties: Set[LfPartyId] = externalCallCheckingParties,
+  ): ViewParticipantData.ViewExternalCallResult =
+    ViewParticipantData.ViewExternalCallResult(result, nodeId, callIndex, checkingParties)
 
   private val defaultActionDescription: ActionDescription =
     ActionDescription.tryFromLfActionNode(
@@ -164,6 +187,8 @@ class TransactionViewTest
         createdIds: Seq[LfContractId] = Seq(createdId),
         archivedInSubviews: Set[LfContractId] = Set.empty,
         resolvedKeys: Map[LfGlobalKey, LfVersioned[KeyResolutionWithMaintainers]] = Map.empty,
+        externalCallResults: ImmArray[ViewParticipantData.ViewExternalCallResult] = ImmArray.Empty,
+        protocolVersion: ProtocolVersion = testedProtocolVersion,
     ): Either[String, ViewParticipantData] = {
 
       val created = createdIds.map { id =>
@@ -183,7 +208,8 @@ class TransactionViewTest
           actionDescription,
           RollbackContext.empty,
           salt,
-          testedProtocolVersion,
+          protocolVersion,
+          externalCallResults,
         )
         .flatMap { data =>
           // Return error message if root action is not valid
@@ -326,6 +352,97 @@ class TransactionViewTest
             vpd.getCryptographicEvidence
           )
           .map(_.unwrap) shouldBe Right(Right(vpd))
+      }
+
+      "reconstruct dev external call results" in {
+        val vpd = create(
+          externalCallResults = ImmArray(
+            viewExternalCallResult(
+              nodeId = LfNodeId(7),
+              callIndex = 1,
+              checkingParties = externalCallCheckingParties,
+            )
+          ),
+          protocolVersion = ProtocolVersion.dev,
+        ).value
+
+        ViewParticipantData
+          .fromByteString(ProtocolVersion.dev, hashOps)(
+            vpd.getCryptographicEvidence
+          )
+          .map(_.unwrap) shouldBe Right(Right(vpd))
+      }
+
+      "reconstruct older view participant data with no external call results" in {
+        val vpd = create(protocolVersion = ProtocolVersion.v35).value
+
+        ViewParticipantData
+          .fromByteString(ProtocolVersion.v35, hashOps)(
+            vpd.getCryptographicEvidence
+          )
+          .map(_.unwrap.map(_.externalCallResults)) shouldBe Right(Right(ImmArray.Empty))
+      }
+    }
+
+    "visible external call results" must {
+      def withExternalCallResults(
+          view: TransactionView,
+          results: ImmArray[ViewParticipantData.ViewExternalCallResult],
+      ): TransactionView =
+        TransactionView.Optics.viewParticipantDataUnsafe
+          .modify(vpd => vpd.tryUnwrap.copy(externalCallResults = results))(view)
+
+      "tolerate a covered exact duplicate in a child view" in {
+        val devFactory =
+          new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
+        val parent = withExternalCallResults(
+          devFactory.SingleExercise(seed = ExampleTransactionFactory.lfHash(30)).view0,
+          ImmArray(
+            viewExternalCallResult(
+              nodeId = LfNodeId(1),
+              checkingParties = Set(ExampleTransactionFactory.signatory),
+            )
+          ),
+        )
+        val child = withExternalCallResults(
+          devFactory.SingleFetch().view0,
+          ImmArray(viewExternalCallResult(nodeId = LfNodeId(2))),
+        )
+
+        TransactionView
+          .create(devFactory.cryptoOps)(
+            parent.viewCommonData,
+            parent.viewParticipantData,
+            TransactionSubviews(Seq(child))(ProtocolVersion.dev, devFactory.cryptoOps),
+            ProtocolVersion.dev,
+          )
+          .value
+          .viewParticipantData
+          .tryUnwrap
+          .externalCallResults shouldBe parent.viewParticipantData.tryUnwrap.externalCallResults
+      }
+
+      "reject the same semantic external call with different outputs" in {
+        val devFactory =
+          new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
+        val parent = withExternalCallResults(
+          devFactory.SingleExercise(seed = ExampleTransactionFactory.lfHash(31)).view0,
+          ImmArray(viewExternalCallResult(nodeId = LfNodeId(1))),
+        )
+        val child = withExternalCallResults(
+          devFactory.SingleFetch().view0,
+          ImmArray(viewExternalCallResult(result = otherExternalCallOutput, nodeId = LfNodeId(2))),
+        )
+
+        TransactionView
+          .create(devFactory.cryptoOps)(
+            parent.viewCommonData,
+            parent.viewParticipantData,
+            TransactionSubviews(Seq(child))(ProtocolVersion.dev, devFactory.cryptoOps),
+            ProtocolVersion.dev,
+          )
+          .left
+          .value should startWith("External call result disagreement for")
       }
     }
   }

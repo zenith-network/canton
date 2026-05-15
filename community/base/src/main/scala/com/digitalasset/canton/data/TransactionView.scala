@@ -16,6 +16,7 @@ import com.digitalasset.canton.data.TransactionView.{
   TransactionViewTreeOps,
   TransactionViewTreeOpsWithPosition,
   WithPath,
+  validateExternalCallResults,
   validateViewCommonData,
   validateViewParticipantData,
 }
@@ -327,6 +328,9 @@ final case class TransactionView private (
     lazy val childParticipantData = subviews.unblindedElementsWithIndex.flatMap(t =>
       t._1.viewParticipantData.unwrap.toOption.toList.map(WithPath(t._2, _))
     )
+    lazy val transitiveChildParticipantData = subviews.unblindedElements.flatMap(
+      _.flatten.flatMap(_.viewParticipantData.unwrap.toOption)
+    )
     lazy val childCommonData = subviews.unblindedElementsWithIndex.flatMap(t =>
       t._1.viewCommonData.unwrap.toOption.toList.map(WithPath(t._2, _))
     )
@@ -334,7 +338,11 @@ final case class TransactionView private (
     for {
       _ <- viewParticipantData.unwrap match {
         case Left(_) => Either.unit
-        case Right(d) => validateViewParticipantData(d, childParticipantData)
+        case Right(d) =>
+          for {
+            _ <- validateViewParticipantData(d, childParticipantData)
+            _ <- validateExternalCallResults(d +: transitiveChildParticipantData)
+          } yield ()
       }
       _ <- viewCommonData.unwrap match {
         case Left(_) => Either.unit
@@ -508,6 +516,19 @@ object TransactionView
     }
 
   }
+
+  def validateExternalCallResults(
+      visibleData: Seq[ViewParticipantData]
+  ): Either[String, Unit] =
+    visibleData
+      .flatMap(_.externalCallResults.toSeq)
+      .groupBy(_.semanticIdentity)
+      .collectFirst {
+        case ((extensionId, functionId, _config, _input), results)
+            if results.map(_.result.output).distinct.sizeCompare(1) > 0 =>
+          s"External call result disagreement for $extensionId/$functionId"
+      }
+      .toLeft(())
 
   def validateViewCommonData(
       parentData: ViewCommonData,
