@@ -684,8 +684,8 @@ object ViewParticipantData
         config = result.config.toByteString,
         input = result.input.toByteString,
         output = result.output.toByteString,
-        nodeId = nodeId.index,
-        callIndex = callIndex,
+        nodeId = Some(nodeId.index),
+        callIndex = Some(callIndex),
         checkingParties = checkingParties.toSeq,
       )
   }
@@ -700,16 +700,18 @@ object ViewParticipantData
         config,
         input,
         output,
-        nodeIdP,
-        callIndex,
+        nodeIdPO,
+        callIndexO,
         checkingPartiesP,
       ) = resultP
       for {
+        nodeIdP <- ProtoConverter.required("node_id", nodeIdPO)
         nodeId <- Either.cond(
           nodeIdP >= 0,
           LfNodeId(nodeIdP),
           ProtoDeserializationError.OtherError(s"Negative external call node_id: $nodeIdP"),
         )
+        callIndex <- ProtoConverter.required("call_index", callIndexO)
         _ <- Either.cond(
           callIndex >= 0,
           (),

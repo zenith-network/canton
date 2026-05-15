@@ -21,8 +21,8 @@ message ViewExternalCallResult {
   bytes config = 3;
   bytes input = 4;
   bytes output = 5;
-  int32 node_id = 6;
-  int32 call_index = 7;
+  optional int32 node_id = 6;
+  optional int32 call_index = 7;
   repeated string checking_parties = 8;
 }
 
