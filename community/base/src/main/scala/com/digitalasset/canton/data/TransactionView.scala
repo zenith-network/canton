@@ -489,24 +489,25 @@ object TransactionView
   private def visibleExternalCallOutputByIdentityO(
       visibleDataO: Option[ViewParticipantData],
       directSubviews: Seq[TransactionView],
-  ): Either[String, Option[ExternalCallOutputByIdentity]] = visibleDataO match {
-    case Some(visibleData) if !visibleData.representativeProtocolVersion.representative.isDev =>
-      Right(None)
-    case _ =>
-      for {
-        ownOutputs <- visibleDataO.fold(
-          Right(None): Either[String, Option[ExternalCallOutputByIdentity]]
-        )(visibleData => externalCallOutputByIdentityO(visibleData.externalCallResults.toSeq))
-        outputs <- directSubviews.foldLeft(
-          Right(ownOutputs): Either[String, Option[ExternalCallOutputByIdentity]]
-        ) { (outputsEO, childView) =>
-          for {
-            outputsO <- outputsEO
-            childOutputsO <- childView.visibleExternalCallOutputByIdentityO
-            mergedOutputsO <- mergeExternalCallOutputByIdentityO(outputsO, childOutputsO)
-          } yield mergedOutputsO
-        }
-      } yield outputs
+  ): Either[String, Option[ExternalCallOutputByIdentity]] = {
+    val ownOutputsE = visibleDataO match {
+      case Some(visibleData) if visibleData.representativeProtocolVersion.representative.isDev =>
+        externalCallOutputByIdentityO(visibleData.externalCallResults.toSeq)
+      case _ => Right(None)
+    }
+
+    for {
+      ownOutputs <- ownOutputsE
+      outputs <- directSubviews.foldLeft(
+        Right(ownOutputs): Either[String, Option[ExternalCallOutputByIdentity]]
+      ) { (outputsEO, childView) =>
+        for {
+          outputsO <- outputsEO
+          childOutputsO <- childView.visibleExternalCallOutputByIdentityO
+          mergedOutputsO <- mergeExternalCallOutputByIdentityO(outputsO, childOutputsO)
+        } yield mergedOutputsO
+      }
+    } yield outputs
   }
 
   private def externalCallOutputByIdentityO(
