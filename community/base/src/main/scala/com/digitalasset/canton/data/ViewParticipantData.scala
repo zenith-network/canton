@@ -146,6 +146,12 @@ final case class ViewParticipantData private (
         throw InvalidViewParticipantData(s"Negative external call node id: ${result.nodeId.index}")
     }
 
+    val externalCallOccurrenceIds =
+      externalCallResults.toSeq.map(result => (result.nodeId, result.callIndex))
+    requireDistinct(externalCallOccurrenceIds) { case (nodeId, callIndex) =>
+      s"externalCallResults contains duplicate occurrence (node id ${nodeId.index}, call index $callIndex)"
+    }
+
   }
 
   private def legacyIsAssignedKeyInconsistent(

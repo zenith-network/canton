@@ -323,6 +323,23 @@ class TransactionViewTest
 
     }
 
+    "external call results have duplicate occurrence identities" must {
+      "reject creation" in {
+        create(
+          externalCallResults = ImmArray(
+            viewExternalCallResult(nodeId = LfNodeId(7), callIndex = 1),
+            viewExternalCallResult(
+              nodeId = LfNodeId(7),
+              callIndex = 1,
+              result = externalCallResult.copy(functionId = "other-function"),
+            ),
+          ),
+          protocolVersion = ProtocolVersion.dev,
+        ).left.value shouldBe
+          "externalCallResults contains duplicate occurrence (node id 7, call index 1)"
+      }
+    }
+
     "deserialized" must {
 
       "reconstruct unkeyed view participant data" in {
