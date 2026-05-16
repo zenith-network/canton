@@ -478,7 +478,13 @@ object TransactionView
   }
 
   private type ExternalCallIdentity = (String, String, Bytes, Bytes)
-  private type ExternalCallOutputByIdentity = Map[ExternalCallIdentity, Bytes]
+  private type ExternalCallOutputByIdentity = Map[ExternalCallIdentity, ExternalCallOutput]
+
+  private final case class ExternalCallOccurrence(nodeId: LfNodeId, callIndex: Int) {
+    def description: String = s"node id ${nodeId.index}, call index $callIndex"
+  }
+
+  private final case class ExternalCallOutput(output: Bytes, occurrence: ExternalCallOccurrence)
 
   private def visibleExternalCallOutputByIdentityO(
       visibleDataO: Option[ViewParticipantData],
@@ -509,11 +515,15 @@ object TransactionView
     externalCallResults.foldLeft(
       Right(None): Either[String, Option[ExternalCallOutputByIdentity]]
     ) { (outputsEO, externalCallResult) =>
+      val output = ExternalCallOutput(
+        externalCallResult.result.output,
+        ExternalCallOccurrence(externalCallResult.nodeId, externalCallResult.callIndex),
+      )
       outputsEO.flatMap(
         addExternalCallOutput(
           _,
           externalCallResult.semanticIdentity,
-          externalCallResult.result.output,
+          output,
         )
       )
     }
@@ -521,7 +531,7 @@ object TransactionView
   private def addExternalCallOutput(
       outputsO: Option[ExternalCallOutputByIdentity],
       identity: ExternalCallIdentity,
-      output: Bytes,
+      output: ExternalCallOutput,
   ): Either[String, Option[ExternalCallOutputByIdentity]] =
     outputsO match {
       case None => Right(Some(Map(identity -> output)))
@@ -532,11 +542,11 @@ object TransactionView
   private def addExternalCallOutput(
       outputs: ExternalCallOutputByIdentity,
       identity: ExternalCallIdentity,
-      output: Bytes,
+      output: ExternalCallOutput,
   ): Either[String, ExternalCallOutputByIdentity] =
     outputs.get(identity) match {
-      case Some(existingOutput) if existingOutput != output =>
-        Left(externalCallResultDisagreement(identity))
+      case Some(existingOutput) if existingOutput.output != output.output =>
+        Left(externalCallResultDisagreement(identity, existingOutput, output))
       case Some(_) => Right(outputs)
       case None => Right(outputs.updated(identity, output))
     }
@@ -573,10 +583,20 @@ object TransactionView
       }
       .map(_ => ())
 
-  private def externalCallResultDisagreement(identity: ExternalCallIdentity): String = {
-    val (extensionId, functionId, _config, _input) = identity
-    s"External call result disagreement for $extensionId/$functionId"
+  private def externalCallResultDisagreement(
+      identity: ExternalCallIdentity,
+      existingOutput: ExternalCallOutput,
+      conflictingOutput: ExternalCallOutput,
+  ): String = {
+    val (extensionId, functionId, config, input) = identity
+    s"External call result disagreement for $extensionId/$functionId " +
+      s"(config bytes: ${bytesSize(config)}, input bytes: ${bytesSize(input)}, " +
+      s"first occurrence: ${existingOutput.occurrence.description}, " +
+      s"conflicting occurrence: ${conflictingOutput.occurrence.description}, " +
+      s"output bytes: ${bytesSize(existingOutput.output)} vs ${bytesSize(conflictingOutput.output)})"
   }
+
+  private def bytesSize(bytes: Bytes): Int = bytes.toByteString.size()
 
   def validateViewParticipantData(
       parentData: ViewParticipantData,

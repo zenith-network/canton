@@ -495,7 +495,9 @@ class TransactionViewTest
             ProtocolVersion.dev,
           )
           .left
-          .value should startWith("External call result disagreement for")
+          .value shouldBe "External call result disagreement for extension/function " +
+          "(config bytes: 6, input bytes: 5, first occurrence: node id 1, call index 0, " +
+          "conflicting occurrence: node id 2, call index 0, output bytes: 6 vs 12)"
       }
 
       "reject the same semantic external call with different outputs across visible children when parent participant data is blinded" in {
