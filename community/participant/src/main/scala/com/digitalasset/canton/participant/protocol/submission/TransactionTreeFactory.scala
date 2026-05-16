@@ -33,9 +33,11 @@ import com.digitalasset.canton.topology.{ParticipantId, PhysicalSynchronizerId}
 import com.digitalasset.canton.tracing.TraceContext
 import com.digitalasset.canton.util.ContractHasher
 import com.digitalasset.canton.version.ProtocolVersion
+import com.digitalasset.daml.lf.data.ImmArray
 import com.digitalasset.daml.lf.transaction.LegacyTransactionErrors
 
 import java.util.UUID
+import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 
 trait TransactionTreeFactory {
@@ -107,6 +109,39 @@ object TransactionTreeFactory {
 
   type ContractInstanceOfId =
     LfContractId => EitherT[FutureUnlessShutdown, ContractLookupError, GenContractInstance]
+
+  private[submission] def nodeIdNormalizationForView(
+      transaction: LfVersionedTransaction,
+      viewRootNodeId: LfNodeId,
+  ): Map[LfNodeId, LfNodeId] = {
+    val nodes = Map.newBuilder[LfNodeId, LfNode]
+
+    @tailrec
+    def go(toVisit: List[LfNodeId]): Unit =
+      toVisit match {
+        case Nil =>
+        case nodeId :: rest =>
+          val node = transaction.nodes.getOrElse(
+            nodeId,
+            throw new IllegalStateException(s"Did not find $nodeId in node map"),
+          )
+          nodes += nodeId -> node
+          val children = node match {
+            case exercise: LfNodeExercises => exercise.children.toList
+            case rollback: LfNodeRollback => rollback.children.toList
+            case _ => List.empty
+          }
+          go(children ++ rest)
+      }
+
+    go(List(viewRootNodeId))
+
+    LfVersionedTransaction(
+      transaction.version,
+      nodes.result(),
+      ImmArray(viewRootNodeId),
+    ).nodeIdNormalization
+  }
 
   def apply(
       submittingParticipant: ParticipantId,

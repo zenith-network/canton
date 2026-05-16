@@ -153,6 +153,7 @@ class NextGenTransactionTreeFactory(
         state,
         contractOfId,
         topologySnapshot,
+        transaction.unwrap,
         transaction.unwrap.roots.toSeq.toSet,
         Some(submittingAdminParty),
       )
@@ -230,6 +231,7 @@ class NextGenTransactionTreeFactory(
       state: State,
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
+      sourceTransaction: LfVersionedTransaction,
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   )(implicit
@@ -283,6 +285,7 @@ class NextGenTransactionTreeFactory(
             state,
             fromPreloaded,
             topologySnapshot,
+            sourceTransaction,
             originalRootNodeIds,
             submittingAdminPartyO,
           )
@@ -296,6 +299,7 @@ class NextGenTransactionTreeFactory(
       state: State,
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
+      sourceTransaction: LfVersionedTransaction,
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   )(implicit
@@ -339,6 +343,13 @@ class NextGenTransactionTreeFactory(
       case _ => false
     }
     val subviewIndex = TransactionSubviews.indices(nbSubViews).iterator
+    lazy val nodeIdNormalization =
+      TransactionTreeFactory.nodeIdNormalizationForView(sourceTransaction, view.nodeId)
+    def normalizeNodeId(nodeId: LfNodeId): LfNodeId =
+      nodeIdNormalization.getOrElse(
+        nodeId,
+        throw new IllegalStateException(s"Did not find $nodeId in view-local node map"),
+      )
 
     for {
       // Compute salts
@@ -354,6 +365,7 @@ class NextGenTransactionTreeFactory(
             state,
             contractOfId,
             topologySnapshot,
+            sourceTransaction,
             originalRootNodeIds,
             submittingAdminPartyO,
           )
@@ -450,6 +462,7 @@ class NextGenTransactionTreeFactory(
         viewParticipantDataSalt,
         contractOfId,
         view.rbContext,
+        normalizeNodeId,
         originalRootNodeIds,
         submittingAdminPartyO,
       )
@@ -634,6 +647,7 @@ class NextGenTransactionTreeFactory(
       salt: Salt,
       contractOfId: ContractInstanceOfId,
       rbContextCore: RollbackContext,
+      normalizeNodeId: LfNodeId => LfNodeId,
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
@@ -702,6 +716,7 @@ class NextGenTransactionTreeFactory(
             externalCallResults = externalCallResultsFromCoreNodes(
               coreOtherNodes,
               childViews,
+              normalizeNodeId,
               originalRootNodeIds,
               submittingAdminPartyO,
             ),
@@ -714,6 +729,7 @@ class NextGenTransactionTreeFactory(
   private def externalCallResultsFromCoreNodes(
       coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackScope)],
       childViews: Seq[TransactionView],
+      normalizeNodeId: LfNodeId => LfNodeId,
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
@@ -722,7 +738,7 @@ class NextGenTransactionTreeFactory(
         exercise.externalCallResults.toSeq.zipWithIndex.map { case (result, callIndex) =>
           ViewParticipantData.ViewExternalCallResult(
             result = result,
-            nodeId = nodeId,
+            nodeId = normalizeNodeId(nodeId),
             callIndex = callIndex,
             checkingParties = checkingPartiesForNode(
               nodeId,
@@ -835,6 +851,7 @@ class NextGenTransactionTreeFactory(
         state,
         contractOfId,
         topologySnapshot,
+        transaction.unwrap,
         transaction.unwrap.roots.toSeq.toSet,
         submittingAdminPartyO,
       )

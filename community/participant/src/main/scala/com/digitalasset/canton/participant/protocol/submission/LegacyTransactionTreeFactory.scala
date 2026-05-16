@@ -184,6 +184,7 @@ class LegacyTransactionTreeFactory(
         state,
         contractOfId,
         topologySnapshot,
+        transaction.unwrap,
         transaction.unwrap.roots.toSeq.toSet,
         Some(submittingAdminParty),
       )
@@ -262,6 +263,7 @@ class LegacyTransactionTreeFactory(
       state: State,
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
+      sourceTransaction: LfVersionedTransaction,
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   )(implicit
@@ -312,6 +314,7 @@ class LegacyTransactionTreeFactory(
             state,
             fromPreloaded,
             topologySnapshot,
+            sourceTransaction,
             originalRootNodeIds,
             submittingAdminPartyO,
           )
@@ -325,6 +328,7 @@ class LegacyTransactionTreeFactory(
       state: State,
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
+      sourceTransaction: LfVersionedTransaction,
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   )(implicit
@@ -355,6 +359,13 @@ class LegacyTransactionTreeFactory(
       case _ => false
     }
     val subviewIndex = TransactionSubviews.indices(nbSubViews).iterator
+    lazy val nodeIdNormalization =
+      TransactionTreeFactory.nodeIdNormalizationForView(sourceTransaction, view.nodeId)
+    def normalizeNodeId(nodeId: LfNodeId): LfNodeId =
+      nodeIdNormalization.getOrElse(
+        nodeId,
+        throw new IllegalStateException(s"Did not find $nodeId in view-local node map"),
+      )
     val createdInView = mutable.Set.empty[LfContractId]
 
     for {
@@ -371,6 +382,7 @@ class LegacyTransactionTreeFactory(
             state,
             contractOfId,
             topologySnapshot,
+            sourceTransaction,
             originalRootNodeIds,
             submittingAdminPartyO,
           )
@@ -484,6 +496,7 @@ class LegacyTransactionTreeFactory(
         viewParticipantDataSalt,
         contractOfId,
         view.rbContext,
+        normalizeNodeId,
         originalRootNodeIds,
         submittingAdminPartyO,
       )
@@ -761,6 +774,7 @@ class LegacyTransactionTreeFactory(
       salt: Salt,
       contractOfId: ContractInstanceOfId,
       rbContextCore: RollbackContext,
+      normalizeNodeId: LfNodeId => LfNodeId,
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
@@ -835,6 +849,7 @@ class LegacyTransactionTreeFactory(
             externalCallResults = externalCallResultsFromCoreNodes(
               coreOtherNodes,
               childViews,
+              normalizeNodeId,
               originalRootNodeIds,
               submittingAdminPartyO,
             ),
@@ -847,6 +862,7 @@ class LegacyTransactionTreeFactory(
   private def externalCallResultsFromCoreNodes(
       coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackScope)],
       childViews: Seq[TransactionView],
+      normalizeNodeId: LfNodeId => LfNodeId,
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
@@ -855,7 +871,7 @@ class LegacyTransactionTreeFactory(
         exercise.externalCallResults.toSeq.zipWithIndex.map { case (result, callIndex) =>
           ViewParticipantData.ViewExternalCallResult(
             result = result,
-            nodeId = nodeId,
+            nodeId = normalizeNodeId(nodeId),
             callIndex = callIndex,
             checkingParties = checkingPartiesForNode(
               nodeId,
@@ -991,6 +1007,7 @@ class LegacyTransactionTreeFactory(
         state,
         contractOfId,
         topologySnapshot,
+        transaction.unwrap,
         transaction.unwrap.roots.toSeq.toSet,
         submittingAdminPartyO,
       )
