@@ -514,6 +514,31 @@ class TransactionViewTest
           .left
           .value should startWith("External call result disagreement for")
       }
+
+      "reject the same semantic external call with different outputs across root views" in {
+        val devFactory =
+          new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
+        val example = devFactory.MultipleRoots
+        val root0 = withExternalCallResults(
+          example.rootViews(0),
+          ImmArray(viewExternalCallResult(nodeId = LfNodeId(0))),
+        )
+        val root1 = withExternalCallResults(
+          example.rootViews(1),
+          ImmArray(viewExternalCallResult(result = otherExternalCallOutput, nodeId = LfNodeId(1))),
+        )
+        val rootViews = example.rootViews.updated(0, root0).updated(1, root1)
+
+        GenTransactionTree
+          .create(devFactory.cryptoOps)(
+            example.transactionTree.submitterMetadata,
+            example.transactionTree.commonMetadata,
+            example.transactionTree.participantMetadata,
+            MerkleSeq.fromSeq(devFactory.cryptoOps, ProtocolVersion.dev)(rootViews),
+          )
+          .left
+          .value should startWith("External call result disagreement for")
+      }
     }
   }
 }

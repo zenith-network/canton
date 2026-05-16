@@ -564,6 +564,20 @@ object TransactionView
           .map(Some(_))
     }
 
+  private[data] def validateExternalCallResultsAcrossViews(
+      views: Seq[TransactionView]
+  ): Either[String, Unit] =
+    views
+      .foldLeft(Right(None): Either[String, Option[ExternalCallOutputByIdentity]]) {
+        (outputsEO, view) =>
+          for {
+            outputsO <- outputsEO
+            viewOutputsO <- view.visibleExternalCallOutputByIdentityO
+            mergedOutputsO <- mergeExternalCallOutputByIdentityO(outputsO, viewOutputsO)
+          } yield mergedOutputsO
+      }
+      .map(_ => ())
+
   private def externalCallResultDisagreement(identity: ExternalCallIdentity): String = {
     val (extensionId, functionId, _config, _input) = identity
     s"External call result disagreement for $extensionId/$functionId"
