@@ -31,7 +31,6 @@ import com.digitalasset.canton.tracing.TraceContext
 import com.digitalasset.canton.util.PackageConsumer.PackageResolver
 import com.digitalasset.canton.util.collection.MapsUtil
 import com.digitalasset.canton.util.{ContractHasher, ErrorUtil, LfTransactionUtil, MonadUtil}
-import com.digitalasset.daml.lf.data.ImmArray
 import com.digitalasset.daml.lf.data.Ref.PackageId
 import com.digitalasset.daml.lf.transaction.CreationTime
 import io.scalaland.chimney.dsl.*
@@ -724,67 +723,6 @@ class NextGenTransactionTreeFactory(
         )
         .leftMap[TransactionTreeConversionError](ViewParticipantDataError.apply)
     } yield viewParticipantData
-  }
-
-  private def externalCallResultsFromCoreNodes(
-      coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackScope)],
-      childViews: Seq[TransactionView],
-      normalizeNodeId: LfNodeId => LfNodeId,
-      originalRootNodeIds: Set[LfNodeId],
-      submittingAdminPartyO: Option[LfPartyId],
-  ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
-    val coreExternalCallResults = coreOtherNodes.flatMap {
-      case (nodeId, exercise: LfNodeExercises, _) =>
-        exercise.externalCallResults.toSeq.zipWithIndex.map { case (result, callIndex) =>
-          ViewParticipantData.ViewExternalCallResult(
-            result = result,
-            nodeId = normalizeNodeId(nodeId),
-            callIndex = callIndex,
-            checkingParties = checkingPartiesForNode(
-              nodeId,
-              exercise,
-              originalRootNodeIds,
-              submittingAdminPartyO,
-            ),
-          )
-        }
-      case _ => Seq.empty
-    }
-
-    suppressExternalCallResultsCoveredBySubviews(coreExternalCallResults, childViews)
-  }
-
-  private def checkingPartiesForNode(
-      nodeId: LfNodeId,
-      node: LfActionNode,
-      originalRootNodeIds: Set[LfNodeId],
-      submittingAdminPartyO: Option[LfPartyId],
-  ): Set[LfPartyId] =
-    Option
-      .when(originalRootNodeIds.contains(nodeId))(submittingAdminPartyO)
-      .flatten
-      .fold[Set[LfPartyId]](Set.empty)(party => Set(party)) |
-      LfTransactionUtil.signatoriesOrMaintainers(node) |
-      LfTransactionUtil.actingParties(node)
-
-  private def suppressExternalCallResultsCoveredBySubviews(
-      coreExternalCallResults: Seq[ViewParticipantData.ViewExternalCallResult],
-      childViews: Seq[TransactionView],
-  ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
-    val coveredBySubviews = mutable.ArrayBuffer.from(
-      childViews
-        .flatMap(_.flatten)
-        .flatMap(_.viewParticipantData.tryUnwrap.externalCallResults.toSeq)
-    )
-    val retained = coreExternalCallResults.filterNot { externalCallResult =>
-      val coveredIndex = coveredBySubviews.indexWhere(externalCallResult.isCoveredBy)
-      if (coveredIndex >= 0) {
-        val _ = coveredBySubviews.remove(coveredIndex)
-        true
-      } else false
-    }
-
-    ImmArray.from(retained)
   }
 
   @SuppressWarnings(Array("org.wartremover.warts.IterableOps"))
