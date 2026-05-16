@@ -193,6 +193,41 @@ final class LegacyTransactionTreeFactoryTest
             }
           }
 
+          "record external call results from child views only once" in {
+            val devFactory = new ExampleTransactionFactory(
+              versionOverride = Some(ProtocolVersion.dev)
+            )(
+              psid = factory.psid.copy(protocolVersion = ProtocolVersion.dev),
+              cantonContractIdVersion = contractIdVersion,
+            )
+            val treeFactory = createTransactionTreeFactory(devFactory)
+            val example = devFactory.ViewInterleavings
+            val externalCallNodeId = LfNodeId(2)
+
+            createTransactionTree(
+              treeFactory,
+              withExternalCallResults(example, externalCallNodeId, ImmArray(externalCallResult)),
+              successfulLookup(example),
+              example.keyResolver.asCidOptionMap,
+              snapshot = devFactory.topologySnapshot,
+              exampleFactory = devFactory,
+            ).value.map { result =>
+              val tree = result.value
+              tree.rootViews.unblindedElements should have size 3
+              val parentView = tree.rootViews.unblindedElements.drop(1).headOption.value
+              val childView = parentView.subviews.unblindedElements.headOption.value
+
+              parentView.viewParticipantData.tryUnwrap.externalCallResults shouldBe ImmArray.Empty
+              val record =
+                childView.viewParticipantData.tryUnwrap.externalCallResults.toSeq.loneElement
+
+              record.result shouldBe externalCallResult
+              record.nodeId shouldBe LfNodeId(0)
+              record.callIndex shouldBe 0
+              record.checkingParties shouldBe Set(ExampleTransactionFactory.signatory)
+            }
+          }
+
           "reconstruct root external call records with the submitting participant admin party" in {
             val devFactory = new ExampleTransactionFactory(
               versionOverride = Some(ProtocolVersion.dev)
