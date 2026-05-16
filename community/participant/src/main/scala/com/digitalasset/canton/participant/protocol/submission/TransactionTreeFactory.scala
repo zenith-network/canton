@@ -170,7 +170,8 @@ object TransactionTreeFactory {
       case _ => Seq.empty
     }
 
-    suppressExternalCallResultsCoveredBySubviews(coreExternalCallResults, childViews)
+    if (coreExternalCallResults.isEmpty) ImmArray.Empty
+    else suppressExternalCallResultsCoveredBySubviews(coreExternalCallResults, childViews)
   }
 
   private def checkingPartiesForNode(
