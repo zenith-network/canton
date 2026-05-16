@@ -927,7 +927,8 @@ class LegacyTransactionTreeFactory(
       legacyKeyResolver.asCidOptionMap,
     )
 
-    val submittingAdminPartyO = submittingParticipantO.map(_.adminParty.toLf)
+    val submittingAdminPartyO =
+      submittingAdminPartyForReconstruction(submittingParticipantO, rootPosition)
 
     val decompositionsF =
       transactionViewDecompositionFactory.fromTransaction(
@@ -946,7 +947,7 @@ class LegacyTransactionTreeFactory(
         contractOfId,
         topologySnapshot,
         transaction.unwrap,
-        transaction.unwrap.roots.toSeq.toSet,
+        originalRootNodeIdsForReconstruction(transaction.unwrap, rootPosition),
         submittingAdminPartyO,
       )
       suffixedNodes = state.suffixedNodes() transform {

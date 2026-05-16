@@ -206,6 +206,21 @@ object TransactionTreeFactory {
     ImmArray.from(retained)
   }
 
+  private[submission] def originalRootNodeIdsForReconstruction(
+      transaction: LfVersionedTransaction,
+      rootPosition: ViewPosition,
+  ): Set[LfNodeId] =
+    if (rootPosition.reverse.isTopLevel) transaction.roots.toSeq.toSet else Set.empty
+
+  private[submission] def submittingAdminPartyForReconstruction(
+      submittingParticipantO: Option[ParticipantId],
+      rootPosition: ViewPosition,
+  ): Option[LfPartyId] =
+    Option
+      .when(rootPosition.reverse.isTopLevel)(submittingParticipantO)
+      .flatten
+      .map(_.adminParty.toLf)
+
   def apply(
       submittingParticipant: ParticipantId,
       synchronizerId: PhysicalSynchronizerId,

@@ -763,7 +763,8 @@ class NextGenTransactionTreeFactory(
       viewSalts,
     )
 
-    val submittingAdminPartyO = submittingParticipantO.map(_.adminParty.toLf)
+    val submittingAdminPartyO =
+      submittingAdminPartyForReconstruction(submittingParticipantO, rootPosition)
 
     val decompositionsF =
       transactionViewDecompositionFactory.fromTransaction(
@@ -790,7 +791,7 @@ class NextGenTransactionTreeFactory(
         contractOfId,
         topologySnapshot,
         transaction.unwrap,
-        transaction.unwrap.roots.toSeq.toSet,
+        originalRootNodeIdsForReconstruction(transaction.unwrap, rootPosition),
         submittingAdminPartyO,
       )
       suffixedNodes = state.suffixedNodes() transform {

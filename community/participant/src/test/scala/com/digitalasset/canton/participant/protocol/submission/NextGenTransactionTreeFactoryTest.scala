@@ -304,6 +304,71 @@ final class NextGenTransactionTreeFactoryTest
                 }
             }
           }
+
+          "reconstruct nested view root external call records without the submitting participant admin party" in {
+            val devFactory = new ExampleTransactionFactory(
+              versionOverride = Some(ProtocolVersion.dev)
+            )(
+              psid = factory.psid.copy(protocolVersion = ProtocolVersion.dev),
+              cantonContractIdVersion = contractIdVersion,
+            )
+            val submittingTreeFactory = createTransactionTreeFactory(devFactory)
+            val validatingTreeFactory = createTransactionTreeFactory(devFactory)
+            val example = devFactory.ViewInterleavings
+            val externalCallNodeId = LfNodeId(2)
+            val transaction =
+              withExternalCallResults(example, externalCallNodeId, ImmArray(externalCallResult))
+            val (_, (reinterpretedTx, reinterpretedMetadata, reinterpretedKeyResolver), _) =
+              example.reinterpretedSubtransactions(2)
+            val reinterpretedTransaction = withExternalCallResults(
+              reinterpretedTx,
+              reinterpretedMetadata,
+              externalCallNodeId,
+              ImmArray(externalCallResult),
+            )
+
+            createTransactionTree(
+              submittingTreeFactory,
+              transaction,
+              successfulLookup(example),
+              example.keyResolver.asCidOptionMap,
+              snapshot = devFactory.topologySnapshot,
+              exampleFactory = devFactory,
+            ).value.flatMap { result =>
+              val tree = result.value
+              val parentView = tree.rootViews.unblindedElements.drop(1).headOption.value
+              val submittedView = parentView.subviews.unblindedElements.headOption.value
+              val submittedRecord =
+                submittedView.viewParticipantData.tryUnwrap.externalCallResults.toSeq.loneElement
+
+              submittedRecord.checkingParties shouldBe Set(ExampleTransactionFactory.signatory)
+
+              validatingTreeFactory
+                .tryReconstruct(
+                  transaction = reinterpretedTransaction,
+                  rootPosition = tree.viewPosition(submittedView.viewHash.toRootHash).value,
+                  mediator = devFactory.mediatorGroup,
+                  submittingParticipantO = Some(ExampleTransactionFactory.submittingParticipant),
+                  salts = submittingTreeFactory.saltsFromView(submittedView),
+                  transactionUuid = devFactory.transactionUuid,
+                  topologySnapshot = devFactory.topologySnapshot,
+                  contractOfId = successfulLookup(example),
+                  rbContext = RollbackContext.empty,
+                  legacyKeyResolver = reinterpretedKeyResolver,
+                  absolutizer = devFactory.absolutizer(tree.updateId),
+                )
+                .failOnShutdown
+                .value
+                .map { reconstruction =>
+                  val (reconstructedView, _) = reconstruction.value
+                  val record =
+                    reconstructedView.viewParticipantData.tryUnwrap.externalCallResults.toSeq.loneElement
+
+                  record.checkingParties shouldBe Set(ExampleTransactionFactory.signatory)
+                  reconstructedView shouldBe submittedView
+                }
+            }
+          }
         }
 
         "a contract lookup fails" must {
