@@ -16,7 +16,6 @@ import com.digitalasset.canton.data.TransactionView.{
   TransactionViewTreeOps,
   TransactionViewTreeOpsWithPosition,
   WithPath,
-  validateExternalCallResults,
   validateViewCommonData,
   validateViewParticipantData,
 }
@@ -29,6 +28,7 @@ import com.digitalasset.canton.util.collection.MapsUtil
 import com.digitalasset.canton.util.{ErrorUtil, NamedLoggingLazyVal, RoseTree}
 import com.digitalasset.canton.version.*
 import com.digitalasset.canton.{LfPartyId, LfVersioned, ProtoDeserializationError}
+import com.digitalasset.daml.lf.data.Bytes
 import com.google.common.annotations.VisibleForTesting
 import monocle.Lens
 import monocle.macros.GenLens
@@ -120,6 +120,13 @@ final case class TransactionView private (
 
   lazy val tryFlattenToParticipantViews: Seq[ParticipantTransactionView] =
     flatten.map(ParticipantTransactionView.tryCreate)
+
+  private lazy val visibleExternalCallOutputByIdentityO
+      : Either[String, Option[TransactionView.ExternalCallOutputByIdentity]] =
+    TransactionView.visibleExternalCallOutputByIdentityO(
+      viewParticipantData.unwrap.toOption,
+      subviews.unblindedElements,
+    )
 
   def allSubviewsWithPositionTree(
       rootPos: ViewPosition
@@ -328,9 +335,6 @@ final case class TransactionView private (
     lazy val childParticipantData = subviews.unblindedElementsWithIndex.flatMap(t =>
       t._1.viewParticipantData.unwrap.toOption.toList.map(WithPath(t._2, _))
     )
-    lazy val transitiveChildParticipantData = subviews.unblindedElements.flatMap(
-      _.flatten.flatMap(_.viewParticipantData.unwrap.toOption)
-    )
     lazy val childCommonData = subviews.unblindedElementsWithIndex.flatMap(t =>
       t._1.viewCommonData.unwrap.toOption.toList.map(WithPath(t._2, _))
     )
@@ -341,7 +345,7 @@ final case class TransactionView private (
         case Right(d) =>
           for {
             _ <- validateViewParticipantData(d, childParticipantData)
-            _ <- validateExternalCallResults(d +: transitiveChildParticipantData)
+            _ <- visibleExternalCallOutputByIdentityO.map(_ => ())
           } yield ()
       }
       _ <- viewCommonData.unwrap match {
@@ -475,6 +479,96 @@ object TransactionView
     def map[Y](f: X => Y): WithPath[Y] = WithPath(path, f(value))
   }
 
+  private type ExternalCallIdentity = (String, String, Bytes, Bytes)
+  private type ExternalCallOutputByIdentity = Map[ExternalCallIdentity, Bytes]
+
+  private def visibleExternalCallOutputByIdentityO(
+      visibleDataO: Option[ViewParticipantData],
+      directSubviews: Seq[TransactionView],
+  ): Either[String, Option[ExternalCallOutputByIdentity]] = visibleDataO match {
+    case Some(visibleData) if visibleData.representativeProtocolVersion.representative.isDev =>
+      visibleExternalCallOutputByIdentity(visibleData, directSubviews)
+    case _ => Right(None)
+  }
+
+  private def visibleExternalCallOutputByIdentity(
+      visibleData: ViewParticipantData,
+      directSubviews: Seq[TransactionView],
+  ): Either[String, Option[ExternalCallOutputByIdentity]] =
+    for {
+      ownOutputs <- externalCallOutputByIdentityO(visibleData.externalCallResults.toSeq)
+      outputs <- directSubviews.foldLeft(
+        Right(ownOutputs): Either[String, Option[ExternalCallOutputByIdentity]]
+      ) { (outputsEO, childView) =>
+        for {
+          outputsO <- outputsEO
+          childOutputsO <- childView.visibleExternalCallOutputByIdentityO
+          mergedOutputsO <- mergeExternalCallOutputByIdentityO(outputsO, childOutputsO)
+        } yield mergedOutputsO
+      }
+    } yield outputs
+
+  private def externalCallOutputByIdentityO(
+      externalCallResults: Seq[ViewParticipantData.ViewExternalCallResult]
+  ): Either[String, Option[ExternalCallOutputByIdentity]] =
+    externalCallResults.foldLeft(
+      Right(None): Either[String, Option[ExternalCallOutputByIdentity]]
+    ) { (outputsEO, externalCallResult) =>
+      outputsEO.flatMap(
+        addExternalCallOutput(
+          _,
+          externalCallResult.semanticIdentity,
+          externalCallResult.result.output,
+        )
+      )
+    }
+
+  private def addExternalCallOutput(
+      outputsO: Option[ExternalCallOutputByIdentity],
+      identity: ExternalCallIdentity,
+      output: Bytes,
+  ): Either[String, Option[ExternalCallOutputByIdentity]] =
+    outputsO match {
+      case None => Right(Some(Map(identity -> output)))
+      case Some(outputs) =>
+        addExternalCallOutput(outputs, identity, output).map(Some(_))
+    }
+
+  private def addExternalCallOutput(
+      outputs: ExternalCallOutputByIdentity,
+      identity: ExternalCallIdentity,
+      output: Bytes,
+  ): Either[String, ExternalCallOutputByIdentity] =
+    outputs.get(identity) match {
+      case Some(existingOutput) if existingOutput != output =>
+        Left(externalCallResultDisagreement(identity))
+      case Some(_) => Right(outputs)
+      case None => Right(outputs.updated(identity, output))
+    }
+
+  private def mergeExternalCallOutputByIdentityO(
+      leftO: Option[ExternalCallOutputByIdentity],
+      rightO: Option[ExternalCallOutputByIdentity],
+  ): Either[String, Option[ExternalCallOutputByIdentity]] =
+    (leftO, rightO) match {
+      case (None, _) => Right(rightO)
+      case (_, None) => Right(leftO)
+      case (Some(left), Some(right)) =>
+        val (base, additions) =
+          if (left.sizeIs >= right.size) (left, right) else (right, left)
+        additions
+          .foldLeft(Right(base): Either[String, ExternalCallOutputByIdentity]) {
+            case (outputsE, (identity, output)) =>
+              outputsE.flatMap(addExternalCallOutput(_, identity, output))
+          }
+          .map(Some(_))
+    }
+
+  private def externalCallResultDisagreement(identity: ExternalCallIdentity): String = {
+    val (extensionId, functionId, _config, _input) = identity
+    s"External call result disagreement for $extensionId/$functionId"
+  }
+
   def validateViewParticipantData(
       parentData: ViewParticipantData,
       childData: Seq[WithPath[ViewParticipantData]],
@@ -516,19 +610,6 @@ object TransactionView
     }
 
   }
-
-  def validateExternalCallResults(
-      visibleData: Seq[ViewParticipantData]
-  ): Either[String, Unit] =
-    visibleData
-      .flatMap(_.externalCallResults.toSeq)
-      .groupBy(_.semanticIdentity)
-      .collectFirst {
-        case ((extensionId, functionId, _config, _input), results)
-            if results.map(_.result.output).distinct.sizeCompare(1) > 0 =>
-          s"External call result disagreement for $extensionId/$functionId"
-      }
-      .toLeft(())
 
   def validateViewCommonData(
       parentData: ViewCommonData,
