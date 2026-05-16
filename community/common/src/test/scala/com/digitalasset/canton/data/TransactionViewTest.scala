@@ -498,6 +498,30 @@ class TransactionViewTest
           .value should startWith("External call result disagreement for")
       }
 
+      "reject the same semantic external call with different outputs across visible children when parent participant data is blinded" in {
+        val devFactory =
+          new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
+        val example = devFactory.MultipleRootsAndViewNestings
+        val child0 = withExternalCallResults(
+          example.view10,
+          ImmArray(viewExternalCallResult(nodeId = LfNodeId(10))),
+        )
+        val child1 = withExternalCallResults(
+          example.view11,
+          ImmArray(viewExternalCallResult(result = otherExternalCallOutput, nodeId = LfNodeId(11))),
+        )
+
+        TransactionView
+          .create(devFactory.cryptoOps)(
+            example.view1.viewCommonData,
+            example.view1.viewParticipantData.blindFully,
+            TransactionSubviews(Seq(child0, child1))(ProtocolVersion.dev, devFactory.cryptoOps),
+            ProtocolVersion.dev,
+          )
+          .left
+          .value should startWith("External call result disagreement for")
+      }
+
       "reject the same semantic external call with a different output in a grandchild view" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()

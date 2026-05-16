@@ -343,11 +343,9 @@ final case class TransactionView private (
       _ <- viewParticipantData.unwrap match {
         case Left(_) => Either.unit
         case Right(d) =>
-          for {
-            _ <- validateViewParticipantData(d, childParticipantData)
-            _ <- visibleExternalCallOutputByIdentityO.map(_ => ())
-          } yield ()
+          validateViewParticipantData(d, childParticipantData)
       }
+      _ <- visibleExternalCallOutputByIdentityO.map(_ => ())
       _ <- viewCommonData.unwrap match {
         case Left(_) => Either.unit
         case Right(d) => validateViewCommonData(d, childCommonData)
@@ -486,27 +484,24 @@ object TransactionView
       visibleDataO: Option[ViewParticipantData],
       directSubviews: Seq[TransactionView],
   ): Either[String, Option[ExternalCallOutputByIdentity]] = visibleDataO match {
-    case Some(visibleData) if visibleData.representativeProtocolVersion.representative.isDev =>
-      visibleExternalCallOutputByIdentity(visibleData, directSubviews)
-    case _ => Right(None)
+    case Some(visibleData) if !visibleData.representativeProtocolVersion.representative.isDev =>
+      Right(None)
+    case _ =>
+      for {
+        ownOutputs <- visibleDataO.fold(
+          Right(None): Either[String, Option[ExternalCallOutputByIdentity]]
+        )(visibleData => externalCallOutputByIdentityO(visibleData.externalCallResults.toSeq))
+        outputs <- directSubviews.foldLeft(
+          Right(ownOutputs): Either[String, Option[ExternalCallOutputByIdentity]]
+        ) { (outputsEO, childView) =>
+          for {
+            outputsO <- outputsEO
+            childOutputsO <- childView.visibleExternalCallOutputByIdentityO
+            mergedOutputsO <- mergeExternalCallOutputByIdentityO(outputsO, childOutputsO)
+          } yield mergedOutputsO
+        }
+      } yield outputs
   }
-
-  private def visibleExternalCallOutputByIdentity(
-      visibleData: ViewParticipantData,
-      directSubviews: Seq[TransactionView],
-  ): Either[String, Option[ExternalCallOutputByIdentity]] =
-    for {
-      ownOutputs <- externalCallOutputByIdentityO(visibleData.externalCallResults.toSeq)
-      outputs <- directSubviews.foldLeft(
-        Right(ownOutputs): Either[String, Option[ExternalCallOutputByIdentity]]
-      ) { (outputsEO, childView) =>
-        for {
-          outputsO <- outputsEO
-          childOutputsO <- childView.visibleExternalCallOutputByIdentityO
-          mergedOutputsO <- mergeExternalCallOutputByIdentityO(outputsO, childOutputsO)
-        } yield mergedOutputsO
-      }
-    } yield outputs
 
   private def externalCallOutputByIdentityO(
       externalCallResults: Seq[ViewParticipantData.ViewExternalCallResult]
