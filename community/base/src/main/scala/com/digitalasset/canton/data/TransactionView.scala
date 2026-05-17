@@ -477,8 +477,21 @@ object TransactionView
     def map[Y](f: X => Y): WithPath[Y] = WithPath(path, f(value))
   }
 
-  private type ExternalCallIdentity = (String, String, Bytes, Bytes)
   private type ExternalCallOutputByIdentity = Map[ExternalCallIdentity, ExternalCallOutput]
+
+  private final case class ExternalCallIdentity(
+      extensionId: String,
+      functionId: String,
+      config: Bytes,
+      input: Bytes,
+  )
+
+  private object ExternalCallIdentity {
+    def from(result: ViewParticipantData.ViewExternalCallResult): ExternalCallIdentity = {
+      val call = result.result
+      ExternalCallIdentity(call.extensionId, call.functionId, call.config, call.input)
+    }
+  }
 
   private final case class ExternalCallOccurrence(nodeId: LfNodeId, callIndex: Int) {
     def description: String = s"node id ${nodeId.index}, call index $callIndex"
@@ -523,7 +536,7 @@ object TransactionView
       outputsEO.flatMap(
         addExternalCallOutput(
           _,
-          externalCallResult.semanticIdentity,
+          ExternalCallIdentity.from(externalCallResult),
           output,
         )
       )
@@ -588,14 +601,12 @@ object TransactionView
       identity: ExternalCallIdentity,
       existingOutput: ExternalCallOutput,
       conflictingOutput: ExternalCallOutput,
-  ): String = {
-    val (extensionId, functionId, config, input) = identity
-    s"External call result disagreement for $extensionId/$functionId " +
-      s"(config bytes: ${bytesSize(config)}, input bytes: ${bytesSize(input)}, " +
+  ): String =
+    s"External call result disagreement for ${identity.extensionId}/${identity.functionId} " +
+      s"(config bytes: ${bytesSize(identity.config)}, input bytes: ${bytesSize(identity.input)}, " +
       s"first occurrence: ${existingOutput.occurrence.description}, " +
       s"conflicting occurrence: ${conflictingOutput.occurrence.description}, " +
       s"output bytes: ${bytesSize(existingOutput.output)} vs ${bytesSize(conflictingOutput.output)})"
-  }
 
   private def bytesSize(bytes: Bytes): Int = bytes.toByteString.size()
 

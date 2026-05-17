@@ -471,12 +471,13 @@ class TransactionViewTest
       }
 
       "reject an external call result with negative call_index" in {
+        val expected =
+          ProtoDeserializationError.OtherError("Negative external call call_index: -1")
+
         ViewParticipantData.ViewExternalCallResult
           .fromProtoV32(externalCallResultProto(callIndex = -1))
           .left
-          .value shouldBe ProtoDeserializationError.OtherError(
-          "Negative external call call_index: -1"
-        )
+          .value shouldBe expected
       }
     }
 

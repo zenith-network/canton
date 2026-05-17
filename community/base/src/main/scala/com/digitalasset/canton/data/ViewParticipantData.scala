@@ -149,11 +149,6 @@ final case class ViewParticipantData private (
           throw InvalidViewParticipantData("External call results require an exercise root action")
       }
 
-    externalCallResults.foreach { result =>
-      if (result.nodeId.index < 0)
-        throw InvalidViewParticipantData(s"Negative external call node id: ${result.nodeId.index}")
-    }
-
     val externalCallOccurrenceIds =
       externalCallResults.toSeq.map(result => (result.nodeId, result.callIndex))
     requireDistinct(externalCallOccurrenceIds) { case (nodeId, callIndex) =>
@@ -682,10 +677,10 @@ object ViewParticipantData
       callIndex: Int,
       checkingParties: Set[LfPartyId],
   ) {
-    if (callIndex < 0) throw InvalidViewParticipantData(s"Negative call index: $callIndex")
-
-    private[data] def semanticIdentity: (String, String, Bytes, Bytes) =
-      (result.extensionId, result.functionId, result.config, result.input)
+    if (nodeId.index < 0)
+      throw InvalidViewParticipantData(s"Negative external call node id: ${nodeId.index}")
+    if (callIndex < 0)
+      throw InvalidViewParticipantData(s"Negative external call call index: $callIndex")
 
     private[ViewParticipantData] def toProtoV32: v32.ViewExternalCallResult =
       v32.ViewExternalCallResult(
