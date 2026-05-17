@@ -53,14 +53,26 @@ object ExternalCallConsistencyChecker {
       outputs: Set[Bytes],
       occurrences: Set[ExternalCallOccurrence],
   ) extends PrettyPrinting {
-    def description: String =
-      s"External call result disagreement for ${key.extensionId}/${key.functionId} " +
+    def description: String = {
+      val outputSizes = cappedList(
+        outputs.toSeq.map(bytesSize).sorted,
+        MaxDiagnosticOutputSizes,
+        "output sizes",
+        ", ",
+      )(_.toString)
+      val occurrenceDescriptions = cappedList(
+        occurrences.toSeq.sortBy(occurrence =>
+          (occurrence.viewPosition.position.toString, occurrence.nodeId.index, occurrence.callIndex)
+        ),
+        MaxDiagnosticOccurrences,
+        "occurrences",
+        "; ",
+      )(_.description)
+
+      s"External call result disagreement for ${cappedString(key.extensionId)}/${cappedString(key.functionId)} " +
         s"(config bytes: ${bytesSize(key.config)}, input bytes: ${bytesSize(key.input)}, " +
-        s"output byte sizes: ${outputs.toSeq.map(bytesSize).sorted.mkString("[", ", ", "]")}, " +
-        s"occurrences: ${occurrences.toSeq
-            .sortBy(occurrence => (occurrence.viewPosition.position.toString, occurrence.nodeId.index, occurrence.callIndex))
-            .map(_.description)
-            .mkString("[", "; ", "]")})"
+        s"output byte sizes: $outputSizes, occurrences: $occurrenceDescriptions)"
+    }
 
     override protected def pretty: Pretty[Inconsistency] =
       prettyOfClass(param("details", _.description.unquoted))
@@ -79,6 +91,29 @@ object ExternalCallConsistencyChecker {
   }
 
   private def bytesSize(bytes: Bytes): Int = bytes.toByteString.size()
+
+  private val MaxDiagnosticIdentifierLength = 64
+  private val MaxDiagnosticOutputSizes = 8
+  private val MaxDiagnosticOccurrences = 8
+
+  private def cappedString(value: String): String =
+    if (value.lengthCompare(MaxDiagnosticIdentifierLength) <= 0) value
+    else
+      s"${value.take(MaxDiagnosticIdentifierLength)}... (${value.length - MaxDiagnosticIdentifierLength} chars omitted)"
+
+  private def cappedList[A](
+      values: Seq[A],
+      maxItems: Int,
+      itemLabel: String,
+      separator: String,
+  )(render: A => String): String = {
+    val shown = values.take(maxItems).map(render)
+    val omitted = values.size - shown.size
+    val entries =
+      if (omitted > 0) shown :+ s"... $omitted more $itemLabel"
+      else shown
+    entries.mkString("[", separator, "]")
+  }
 }
 
 private[validation] trait ExternalCallConsistencyChecking {

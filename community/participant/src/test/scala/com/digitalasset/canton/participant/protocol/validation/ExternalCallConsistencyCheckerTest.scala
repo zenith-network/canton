@@ -45,11 +45,12 @@ class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
       nodeId: LfNodeId,
       result: ExternalCallResult,
       checkingParties: Set[LfPartyId],
+      callIndex: Int = 0,
   ): ViewParticipantData.ViewExternalCallResult =
     ViewParticipantData.ViewExternalCallResult(
       result = result,
       nodeId = nodeId,
-      callIndex = 0,
+      callIndex = callIndex,
       checkingParties = checkingParties,
     )
 
@@ -185,6 +186,35 @@ class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
 
       sut.check(viewResults, hostedConfirmingParties = Set(partyA)) shouldBe
         ExternalCallConsistencyChecker.Result.empty
+    }
+
+    "bound disagreement diagnostic details" in {
+      val longExtensionId = Iterator.fill(300)("e").mkString
+      val longFunctionId = Iterator.fill(300)("f").mkString
+      val example = factory.MultipleRoots
+      val externalCallResults = ImmArray.from((0 until 20).map { index =>
+        externalCallViewResult(
+          nodeId = LfNodeId(index),
+          result = externalCallResult.copy(
+            extensionId = longExtensionId,
+            functionId = longFunctionId,
+            output = Bytes.fromStringUtf8("x" * index),
+          ),
+          checkingParties = Set(partyA),
+          callIndex = index,
+        )
+      })
+      val view = withExternalCallResults(example.rootViews(4), externalCallResults)
+
+      val result = sut.check(Map(ViewPosition.root -> validationResult(view)), Set(partyA))
+      val description = result.inconsistencies(partyA).description
+
+      description should not include longExtensionId
+      description should not include longFunctionId
+      description should include("chars omitted")
+      description should include("more output sizes")
+      description should include("more occurrences")
+      description.length should be < 1200
     }
   }
 }
