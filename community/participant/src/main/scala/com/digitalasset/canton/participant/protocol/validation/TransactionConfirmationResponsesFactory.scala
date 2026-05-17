@@ -3,6 +3,7 @@
 
 package com.digitalasset.canton.participant.protocol.validation
 
+import cats.Eval
 import cats.syntax.parallel.*
 import com.daml.nonempty.NonEmpty
 import com.digitalasset.canton.data.CantonTimestamp
@@ -24,7 +25,7 @@ class TransactionConfirmationResponsesFactory(
     participantId: ParticipantId,
     synchronizerId: PhysicalSynchronizerId,
     protected val loggerFactory: NamedLoggerFactory,
-    externalCallConsistencyChecker: ExternalCallConsistencyChecker =
+    externalCallConsistencyChecker: ExternalCallConsistencyChecking =
       new ExternalCallConsistencyChecker(),
 ) extends NamedLogging {
 
@@ -159,17 +160,31 @@ class TransactionConfirmationResponsesFactory(
               hostedConfirmingParties <-
                 hostedConfirmingPartiesOfView(viewValidationResult)
 
-            } yield (viewPosition, viewValidationResult, hostedConfirmingParties)
+              hasHostedExternalCallResults =
+                protocolVersion.isDev &&
+                  hostedConfirmingParties.nonEmpty &&
+                  viewValidationResult.view.viewParticipantData.externalCallResults.nonEmpty
+            } yield (
+              viewPosition,
+              viewValidationResult,
+              hostedConfirmingParties,
+              hasHostedExternalCallResults,
+            )
           }
 
-        allHostedConfirmingParties = viewsWithHostedParties.flatMap(_._3).toSet
-        externalCallConsistencyResult = externalCallConsistencyChecker.check(
-          transactionValidationResult.viewValidationResults,
-          allHostedConfirmingParties,
+        hasHostedExternalCallResults = viewsWithHostedParties.exists(_._4)
+        externalCallConsistencyResult = Eval.later(
+          if (hasHostedExternalCallResults) {
+            val allHostedConfirmingParties = viewsWithHostedParties.flatMap(_._3).toSet
+            externalCallConsistencyChecker.check(
+              transactionValidationResult.viewValidationResults,
+              allHostedConfirmingParties,
+            )
+          } else ExternalCallConsistencyChecker.Result.empty
         )
 
         responses <- viewsWithHostedParties
-          .parTraverse { case (viewPosition, viewValidationResult, hostedConfirmingParties) =>
+          .parTraverse { case (viewPosition, viewValidationResult, hostedConfirmingParties, _) =>
             FutureUnlessShutdown.pure {
 
               // Rejections due to a failed internal consistency check
@@ -281,7 +296,7 @@ class TransactionConfirmationResponsesFactory(
                 case Some(malformedResponse) => Seq(malformedResponse)
                 case None =>
                   val externalCallInconsistencies =
-                    externalCallConsistencyResult.inconsistencies.filter { case (party, _) =>
+                    externalCallConsistencyResult.value.inconsistencies.filter { case (party, _) =>
                       hostedConfirmingParties(party)
                     }
                   val inconsistentParties = externalCallInconsistencies.keySet
