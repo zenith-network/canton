@@ -16,5 +16,7 @@ class LegacyInternalConsistencyCheckerTest extends InternalConsistencyCheckerTes
 
     "standard happy cases" should checkStandardHappyCases(sut)
 
+    "external call consistency cases" should checkExternalCallConsistencyCases(sut)
+
   }
 }

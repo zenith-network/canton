@@ -7,7 +7,7 @@ import cats.data.EitherT
 import cats.syntax.either.*
 import com.daml.nonempty.NonEmpty
 import com.digitalasset.canton.LfPartyId
-import com.digitalasset.canton.data.FullTransactionViewTree
+import com.digitalasset.canton.data.{FullTransactionViewTree, TransactionView}
 import com.digitalasset.canton.lifecycle.FutureUnlessShutdown
 import com.digitalasset.canton.lifecycle.FutureUnlessShutdownImpl.*
 import com.digitalasset.canton.logging.NamedLoggerFactory
@@ -155,6 +155,11 @@ object InternalConsistencyChecker {
       prettyOfClass(unnamedParam(_.key))
   }
 
+  final case class ExternalCallResultDisagreement(error: String) extends Error {
+    override protected def pretty: Pretty[ExternalCallResultDisagreement] =
+      prettyOfClass(param("cause", _.error.unquoted))
+  }
+
   final case class IncorrectRollbackScopeOrder(error: String) extends Error {
     override protected def pretty: Pretty[IncorrectRollbackScopeOrder] = prettyOfClass(
       param("cause", _.error.unquoted)
@@ -190,6 +195,13 @@ object InternalConsistencyChecker {
     ).left.map { error =>
       ErrorWithInternalConsistencyCheck(IncorrectRollbackScopeOrder(error))
     }
+
+  private[validation] def checkExternalCallResults(
+      rootViewTrees: NonEmpty[Seq[FullTransactionViewTree]]
+  ): Result[Unit] =
+    TransactionView
+      .validateExternalCallResultsAcrossViews(rootViewTrees.forgetNE.map(_.view))
+      .leftMap(error => ErrorWithInternalConsistencyCheck(ExternalCallResultDisagreement(error)))
 
   private[validation] def checkNotUsedBeforeCreation(
       previouslyReferenced: Set[LfContractId],

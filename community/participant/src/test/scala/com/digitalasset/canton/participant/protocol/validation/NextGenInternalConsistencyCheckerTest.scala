@@ -35,6 +35,8 @@ class NextGenInternalConsistencyCheckerTest extends InternalConsistencyCheckerTe
 
     "standard happy cases" should checkStandardHappyCases(sut)
 
+    "external call consistency cases" should checkExternalCallConsistencyCases(sut)
+
     "key consistency cases" should checkKeyConsistencyCases(sut)
 
   }

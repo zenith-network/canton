@@ -546,6 +546,40 @@ class TransactionViewTest
           "conflicting occurrence: node id 2, call index 0, output bytes: 6 vs 12)"
       }
 
+      "accept the same semantic external call with different outputs for disjoint checking parties" in {
+        val devFactory =
+          new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
+        val example = devFactory.MultipleRootsAndViewNestings
+        val parent = withExternalCallResults(
+          devFactory.SingleExercise(seed = ExampleTransactionFactory.lfHash(32)).view0,
+          ImmArray(
+            viewExternalCallResult(
+              nodeId = LfNodeId(1),
+              checkingParties = Set(ExampleTransactionFactory.signatory),
+            )
+          ),
+        )
+        val child = withExternalCallResults(
+          example.view11,
+          ImmArray(
+            viewExternalCallResult(
+              result = otherExternalCallOutput,
+              nodeId = LfNodeId(2),
+              checkingParties = Set(ExampleTransactionFactory.submitter),
+            )
+          ),
+        )
+
+        TransactionView
+          .create(devFactory.cryptoOps)(
+            parent.viewCommonData,
+            parent.viewParticipantData,
+            TransactionSubviews(Seq(child))(ProtocolVersion.dev, devFactory.cryptoOps),
+            ProtocolVersion.dev,
+          )
+          .value
+      }
+
       "reject the same semantic external call with different outputs across visible children when parent participant data is blinded" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()

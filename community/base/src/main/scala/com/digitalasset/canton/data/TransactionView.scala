@@ -477,7 +477,8 @@ object TransactionView
     def map[Y](f: X => Y): WithPath[Y] = WithPath(path, f(value))
   }
 
-  private type ExternalCallOutputByIdentity = Map[ExternalCallIdentity, ExternalCallOutput]
+  private type ExternalCallOutputByIdentity =
+    Map[ExternalCallIdentity, Map[Bytes, ExternalCallOutput]]
 
   private final case class ExternalCallIdentity(
       extensionId: String,
@@ -497,7 +498,40 @@ object TransactionView
     def description: String = s"node id ${nodeId.index}, call index $callIndex"
   }
 
-  private final case class ExternalCallOutput(output: Bytes, occurrence: ExternalCallOccurrence)
+  private final case class ExternalCallOutput(
+      output: Bytes,
+      occurrence: ExternalCallOccurrence,
+      checkingPartyOccurrences: Map[LfPartyId, ExternalCallOccurrence],
+  ) {
+
+    def conflictingCheckingParty(other: ExternalCallOutput): Option[LfPartyId] =
+      checkingPartyOccurrences.keySet.find(other.checkingPartyOccurrences.contains)
+
+    def occurrenceFor(checkingParty: LfPartyId): ExternalCallOccurrence =
+      checkingPartyOccurrences.getOrElse(checkingParty, occurrence)
+
+    def disagreementWith(
+        other: ExternalCallOutput
+    ): Option[(ExternalCallOccurrence, ExternalCallOccurrence)] =
+      Option
+        .when(output != other.output)(conflictingCheckingParty(other))
+        .flatten
+        .map(checkingParty => occurrenceFor(checkingParty) -> other.occurrenceFor(checkingParty))
+
+    def mergeSameOutput(other: ExternalCallOutput): ExternalCallOutput =
+      copy(checkingPartyOccurrences = other.checkingPartyOccurrences ++ checkingPartyOccurrences)
+  }
+
+  private object ExternalCallOutput {
+    def from(result: ViewParticipantData.ViewExternalCallResult): ExternalCallOutput = {
+      val occurrence = ExternalCallOccurrence(result.nodeId, result.callIndex)
+      ExternalCallOutput(
+        result.result.output,
+        occurrence,
+        result.checkingParties.view.map(_ -> occurrence).toMap,
+      )
+    }
+  }
 
   private def visibleExternalCallOutputByIdentityO(
       visibleDataO: Option[ViewParticipantData],
@@ -529,10 +563,7 @@ object TransactionView
     externalCallResults.foldLeft(
       Right(None): Either[String, Option[ExternalCallOutputByIdentity]]
     ) { (outputsEO, externalCallResult) =>
-      val output = ExternalCallOutput(
-        externalCallResult.result.output,
-        ExternalCallOccurrence(externalCallResult.nodeId, externalCallResult.callIndex),
-      )
+      val output = ExternalCallOutput.from(externalCallResult)
       outputsEO.flatMap(
         addExternalCallOutput(
           _,
@@ -548,7 +579,7 @@ object TransactionView
       output: ExternalCallOutput,
   ): Either[String, Option[ExternalCallOutputByIdentity]] =
     outputsO match {
-      case None => Right(Some(Map(identity -> output)))
+      case None => Right(Some(Map(identity -> Map(output.output -> output))))
       case Some(outputs) =>
         addExternalCallOutput(outputs, identity, output).map(Some(_))
     }
@@ -559,10 +590,32 @@ object TransactionView
       output: ExternalCallOutput,
   ): Either[String, ExternalCallOutputByIdentity] =
     outputs.get(identity) match {
-      case Some(existingOutput) if existingOutput.output != output.output =>
-        Left(externalCallResultDisagreement(identity, existingOutput, output))
-      case Some(_) => Right(outputs)
-      case None => Right(outputs.updated(identity, output))
+      case Some(outputsByValue) =>
+        val disagreementO = outputsByValue.values.iterator
+          .map { existingOutput =>
+            existingOutput.disagreementWith(output).map {
+              case (existingOccurrence, conflictingOccurrence) =>
+                externalCallResultDisagreement(
+                  identity,
+                  existingOutput.copy(occurrence = existingOccurrence),
+                  output.copy(occurrence = conflictingOccurrence),
+                )
+            }
+          }
+          .collectFirst { case Some(disagreement) => disagreement }
+
+        disagreementO match {
+          case Some(disagreement) => Left(disagreement)
+          case None =>
+            val updatedOutputsByValue = outputsByValue.get(output.output) match {
+              case Some(existingOutput) =>
+                outputsByValue.updated(output.output, existingOutput.mergeSameOutput(output))
+              case None => outputsByValue.updated(output.output, output)
+            }
+            Right(outputs.updated(identity, updatedOutputsByValue))
+        }
+
+      case None => Right(outputs.updated(identity, Map(output.output -> output)))
     }
 
   private def mergeExternalCallOutputByIdentityO(
@@ -577,13 +630,15 @@ object TransactionView
           if (left.sizeIs >= right.size) (left, right) else (right, left)
         additions
           .foldLeft(Right(base): Either[String, ExternalCallOutputByIdentity]) {
-            case (outputsE, (identity, output)) =>
-              outputsE.flatMap(addExternalCallOutput(_, identity, output))
+            case (outputsE, (identity, outputsByValue)) =>
+              outputsByValue.values.foldLeft(outputsE) { (outputsE, output) =>
+                outputsE.flatMap(addExternalCallOutput(_, identity, output))
+              }
           }
           .map(Some(_))
     }
 
-  private[data] def validateExternalCallResultsAcrossViews(
+  private[canton] def validateExternalCallResultsAcrossViews(
       views: Seq[TransactionView]
   ): Either[String, Unit] =
     views
