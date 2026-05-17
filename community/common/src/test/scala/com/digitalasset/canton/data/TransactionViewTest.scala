@@ -520,7 +520,7 @@ class TransactionViewTest
           .externalCallResults shouldBe parent.viewParticipantData.tryUnwrap.externalCallResults
       }
 
-      "reject the same semantic external call with different outputs" in {
+      "allow the same semantic external call with different outputs" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
         val example = devFactory.MultipleRootsAndViewNestings
@@ -540,10 +540,7 @@ class TransactionViewTest
             TransactionSubviews(Seq(child))(ProtocolVersion.dev, devFactory.cryptoOps),
             ProtocolVersion.dev,
           )
-          .left
-          .value shouldBe "External call result disagreement for extension/function " +
-          "(config bytes: 6, input bytes: 5, first occurrence: node id 1, call index 0, " +
-          "conflicting occurrence: node id 2, call index 0, output bytes: 6 vs 12)"
+          .value
       }
 
       "accept the same semantic external call with different outputs for disjoint checking parties" in {
@@ -580,7 +577,7 @@ class TransactionViewTest
           .value
       }
 
-      "reject the same semantic external call with different outputs across visible children when parent participant data is blinded" in {
+      "allow the same semantic external call with different outputs across visible children when parent participant data is blinded" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
         val child0 = withExternalCallResults(
@@ -610,11 +607,10 @@ class TransactionViewTest
             TransactionSubviews(Seq(child0, child1))(ProtocolVersion.dev, devFactory.cryptoOps),
             ProtocolVersion.dev,
           )
-          .left
-          .value should startWith("External call result disagreement for")
+          .value
       }
 
-      "reject the same semantic external call with different outputs across visible children when parent participant data is non-dev" in {
+      "allow the same semantic external call with different outputs across visible children when parent participant data is non-dev" in {
         val nonDevFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.v35))()
         val devFactory =
@@ -646,11 +642,10 @@ class TransactionViewTest
             TransactionSubviews(Seq(child0, child1))(ProtocolVersion.dev, nonDevFactory.cryptoOps),
             ProtocolVersion.dev,
           )
-          .left
-          .value should startWith("External call result disagreement for")
+          .value
       }
 
-      "reject the same semantic external call with a different output in a grandchild view" in {
+      "allow the same semantic external call with a different output in a grandchild view" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
         val example = devFactory.MultipleRootsAndViewNestings
@@ -685,11 +680,10 @@ class TransactionViewTest
             TransactionSubviews(Seq(child))(ProtocolVersion.dev, devFactory.cryptoOps),
             ProtocolVersion.dev,
           )
-          .left
-          .value should startWith("External call result disagreement for")
+          .value
       }
 
-      "reject the same semantic external call with different outputs across root views" in {
+      "allow the same semantic external call with different outputs across root views" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
         val example = devFactory.MultipleRoots
@@ -710,8 +704,7 @@ class TransactionViewTest
             example.transactionTree.participantMetadata,
             MerkleSeq.fromSeq(devFactory.cryptoOps, ProtocolVersion.dev)(rootViews),
           )
-          .left
-          .value should startWith("External call result disagreement for")
+          .value
       }
     }
   }

@@ -48,7 +48,6 @@ final case class GenTransactionTree private (
   def validated: Either[String, this.type] = for {
     _ <- checkUniqueHashes
     _ <- commonMetadata.unwrap.leftMap(_ => "commonMetadata is blinded")
-    _ <- TransactionView.validateExternalCallResultsAcrossViews(rootViews.unblindedElements)
   } yield this
 
   private def checkUniqueHashes: Either[String, this.type] = {

@@ -32,7 +32,6 @@ class NextGenInternalConsistencyChecker(
   ): Either[ErrorWithInternalConsistencyCheck, Unit] =
     for {
       _ <- checkRollbackScopes(rootViewTrees)
-      _ <- checkExternalCallResults(rootViewTrees)
       _ <- checkContractState(rootViewTrees)
       _ <- checkKeyState(hostedKeys, unmergedTransactionsWithoutToplevelRollbackNodes)
     } yield ()

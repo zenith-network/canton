@@ -28,7 +28,6 @@ import com.digitalasset.canton.util.collection.MapsUtil
 import com.digitalasset.canton.util.{ErrorUtil, NamedLoggingLazyVal, RoseTree}
 import com.digitalasset.canton.version.*
 import com.digitalasset.canton.{LfPartyId, LfVersioned, ProtoDeserializationError}
-import com.digitalasset.daml.lf.data.Bytes
 import com.google.common.annotations.VisibleForTesting
 import monocle.Lens
 import monocle.macros.GenLens
@@ -120,13 +119,6 @@ final case class TransactionView private (
 
   lazy val tryFlattenToParticipantViews: Seq[ParticipantTransactionView] =
     flatten.map(ParticipantTransactionView.tryCreate)
-
-  private lazy val visibleExternalCallOutputByIdentityO
-      : Either[String, Option[TransactionView.ExternalCallOutputByIdentity]] =
-    TransactionView.visibleExternalCallOutputByIdentityO(
-      viewParticipantData.unwrap.toOption,
-      subviews.unblindedElements,
-    )
 
   def allSubviewsWithPositionTree(
       rootPos: ViewPosition
@@ -345,7 +337,6 @@ final case class TransactionView private (
         case Right(d) =>
           validateViewParticipantData(d, childParticipantData)
       }
-      _ <- visibleExternalCallOutputByIdentityO.map(_ => ())
       _ <- viewCommonData.unwrap match {
         case Left(_) => Either.unit
         case Right(d) => validateViewCommonData(d, childCommonData)
@@ -476,194 +467,6 @@ object TransactionView
   final case class WithPath[X](path: MerklePathElement, value: X) {
     def map[Y](f: X => Y): WithPath[Y] = WithPath(path, f(value))
   }
-
-  private type ExternalCallOutputByIdentity =
-    Map[ExternalCallIdentity, Map[Bytes, ExternalCallOutput]]
-
-  private final case class ExternalCallIdentity(
-      extensionId: String,
-      functionId: String,
-      config: Bytes,
-      input: Bytes,
-  )
-
-  private object ExternalCallIdentity {
-    def from(result: ViewParticipantData.ViewExternalCallResult): ExternalCallIdentity = {
-      val call = result.result
-      ExternalCallIdentity(call.extensionId, call.functionId, call.config, call.input)
-    }
-  }
-
-  private final case class ExternalCallOccurrence(nodeId: LfNodeId, callIndex: Int) {
-    def description: String = s"node id ${nodeId.index}, call index $callIndex"
-  }
-
-  private final case class ExternalCallOutput(
-      output: Bytes,
-      occurrence: ExternalCallOccurrence,
-      checkingPartyOccurrences: Map[LfPartyId, ExternalCallOccurrence],
-  ) {
-
-    def conflictingCheckingParty(other: ExternalCallOutput): Option[LfPartyId] =
-      checkingPartyOccurrences.keySet.find(other.checkingPartyOccurrences.contains)
-
-    def occurrenceFor(checkingParty: LfPartyId): ExternalCallOccurrence =
-      checkingPartyOccurrences.getOrElse(checkingParty, occurrence)
-
-    def disagreementWith(
-        other: ExternalCallOutput
-    ): Option[(ExternalCallOccurrence, ExternalCallOccurrence)] =
-      Option
-        .when(output != other.output)(conflictingCheckingParty(other))
-        .flatten
-        .map(checkingParty => occurrenceFor(checkingParty) -> other.occurrenceFor(checkingParty))
-
-    def mergeSameOutput(other: ExternalCallOutput): ExternalCallOutput =
-      copy(checkingPartyOccurrences = other.checkingPartyOccurrences ++ checkingPartyOccurrences)
-  }
-
-  private object ExternalCallOutput {
-    def from(result: ViewParticipantData.ViewExternalCallResult): ExternalCallOutput = {
-      val occurrence = ExternalCallOccurrence(result.nodeId, result.callIndex)
-      ExternalCallOutput(
-        result.result.output,
-        occurrence,
-        result.checkingParties.view.map(_ -> occurrence).toMap,
-      )
-    }
-  }
-
-  private def visibleExternalCallOutputByIdentityO(
-      visibleDataO: Option[ViewParticipantData],
-      directSubviews: Seq[TransactionView],
-  ): Either[String, Option[ExternalCallOutputByIdentity]] = {
-    val ownOutputsE = visibleDataO match {
-      case Some(visibleData) if visibleData.representativeProtocolVersion.representative.isDev =>
-        externalCallOutputByIdentityO(visibleData.externalCallResults.toSeq)
-      case _ => Right(None)
-    }
-
-    for {
-      ownOutputs <- ownOutputsE
-      outputs <- directSubviews.foldLeft(
-        Right(ownOutputs): Either[String, Option[ExternalCallOutputByIdentity]]
-      ) { (outputsEO, childView) =>
-        for {
-          outputsO <- outputsEO
-          childOutputsO <- childView.visibleExternalCallOutputByIdentityO
-          mergedOutputsO <- mergeExternalCallOutputByIdentityO(outputsO, childOutputsO)
-        } yield mergedOutputsO
-      }
-    } yield outputs
-  }
-
-  private def externalCallOutputByIdentityO(
-      externalCallResults: Seq[ViewParticipantData.ViewExternalCallResult]
-  ): Either[String, Option[ExternalCallOutputByIdentity]] =
-    externalCallResults.foldLeft(
-      Right(None): Either[String, Option[ExternalCallOutputByIdentity]]
-    ) { (outputsEO, externalCallResult) =>
-      val output = ExternalCallOutput.from(externalCallResult)
-      outputsEO.flatMap(
-        addExternalCallOutput(
-          _,
-          ExternalCallIdentity.from(externalCallResult),
-          output,
-        )
-      )
-    }
-
-  private def addExternalCallOutput(
-      outputsO: Option[ExternalCallOutputByIdentity],
-      identity: ExternalCallIdentity,
-      output: ExternalCallOutput,
-  ): Either[String, Option[ExternalCallOutputByIdentity]] =
-    outputsO match {
-      case None => Right(Some(Map(identity -> Map(output.output -> output))))
-      case Some(outputs) =>
-        addExternalCallOutput(outputs, identity, output).map(Some(_))
-    }
-
-  private def addExternalCallOutput(
-      outputs: ExternalCallOutputByIdentity,
-      identity: ExternalCallIdentity,
-      output: ExternalCallOutput,
-  ): Either[String, ExternalCallOutputByIdentity] =
-    outputs.get(identity) match {
-      case Some(outputsByValue) =>
-        val disagreementO = outputsByValue.values.iterator
-          .map { existingOutput =>
-            existingOutput.disagreementWith(output).map {
-              case (existingOccurrence, conflictingOccurrence) =>
-                externalCallResultDisagreement(
-                  identity,
-                  existingOutput.copy(occurrence = existingOccurrence),
-                  output.copy(occurrence = conflictingOccurrence),
-                )
-            }
-          }
-          .collectFirst { case Some(disagreement) => disagreement }
-
-        disagreementO match {
-          case Some(disagreement) => Left(disagreement)
-          case None =>
-            val updatedOutputsByValue = outputsByValue.get(output.output) match {
-              case Some(existingOutput) =>
-                outputsByValue.updated(output.output, existingOutput.mergeSameOutput(output))
-              case None => outputsByValue.updated(output.output, output)
-            }
-            Right(outputs.updated(identity, updatedOutputsByValue))
-        }
-
-      case None => Right(outputs.updated(identity, Map(output.output -> output)))
-    }
-
-  private def mergeExternalCallOutputByIdentityO(
-      leftO: Option[ExternalCallOutputByIdentity],
-      rightO: Option[ExternalCallOutputByIdentity],
-  ): Either[String, Option[ExternalCallOutputByIdentity]] =
-    (leftO, rightO) match {
-      case (None, _) => Right(rightO)
-      case (_, None) => Right(leftO)
-      case (Some(left), Some(right)) =>
-        val (base, additions) =
-          if (left.sizeIs >= right.size) (left, right) else (right, left)
-        additions
-          .foldLeft(Right(base): Either[String, ExternalCallOutputByIdentity]) {
-            case (outputsE, (identity, outputsByValue)) =>
-              outputsByValue.values.foldLeft(outputsE) { (outputsE, output) =>
-                outputsE.flatMap(addExternalCallOutput(_, identity, output))
-              }
-          }
-          .map(Some(_))
-    }
-
-  private[canton] def validateExternalCallResultsAcrossViews(
-      views: Seq[TransactionView]
-  ): Either[String, Unit] =
-    views
-      .foldLeft(Right(None): Either[String, Option[ExternalCallOutputByIdentity]]) {
-        (outputsEO, view) =>
-          for {
-            outputsO <- outputsEO
-            viewOutputsO <- view.visibleExternalCallOutputByIdentityO
-            mergedOutputsO <- mergeExternalCallOutputByIdentityO(outputsO, viewOutputsO)
-          } yield mergedOutputsO
-      }
-      .map(_ => ())
-
-  private def externalCallResultDisagreement(
-      identity: ExternalCallIdentity,
-      existingOutput: ExternalCallOutput,
-      conflictingOutput: ExternalCallOutput,
-  ): String =
-    s"External call result disagreement for ${identity.extensionId}/${identity.functionId} " +
-      s"(config bytes: ${bytesSize(identity.config)}, input bytes: ${bytesSize(identity.input)}, " +
-      s"first occurrence: ${existingOutput.occurrence.description}, " +
-      s"conflicting occurrence: ${conflictingOutput.occurrence.description}, " +
-      s"output bytes: ${bytesSize(existingOutput.output)} vs ${bytesSize(conflictingOutput.output)})"
-
-  private def bytesSize(bytes: Bytes): Int = bytes.toByteString.size()
 
   def validateViewParticipantData(
       parentData: ViewParticipantData,

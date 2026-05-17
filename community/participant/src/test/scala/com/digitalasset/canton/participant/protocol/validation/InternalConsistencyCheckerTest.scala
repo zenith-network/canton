@@ -115,7 +115,7 @@ abstract class InternalConsistencyCheckerTest extends AnyWordSpec with BaseTest 
 
   def checkExternalCallConsistencyCases(sut: InternalConsistencyChecker): Unit =
     "external call consistency" must {
-      "reject conflicting outputs across received root view trees for overlapping checking parties" in {
+      "not reject conflicting outputs as an internal consistency failure" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
         val example = devFactory.MultipleRoots
@@ -152,10 +152,7 @@ abstract class InternalConsistencyCheckerTest extends AnyWordSpec with BaseTest 
         val root0Tree = treeWithOnlyRoot(root0Index, root0)
         val root1Tree = treeWithOnlyRoot(root1Index, root1)
 
-        inside(checkViews(sut, Seq(root0Tree, root1Tree))) {
-          case Left(ErrorWithInternalConsistencyCheck(error)) =>
-            error.toString should include("External call result disagreement")
-        }
+        checkViews(sut, Seq(root0Tree, root1Tree)) shouldBe Either.unit
       }
     }
 
