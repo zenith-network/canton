@@ -7,6 +7,7 @@ import com.digitalasset.canton.crypto.Hash
 import com.digitalasset.canton.protocol.LfHash
 import com.digitalasset.canton.protocol.hash.{BaseNodeHashTest, HashTracer}
 import com.digitalasset.canton.version.HashingSchemeVersion
+import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
 import com.digitalasset.daml.lf.data.Ref.PackageName
 import com.digitalasset.daml.lf.transaction.*
 import com.digitalasset.daml.lf.value.Value.ContractId
@@ -424,6 +425,27 @@ class NodeHashTest extends BaseNodeHashTest {
           byKey = false
         )
       ) should !==(defaultExerciseHash)
+    }
+
+    "not include external call results" in {
+      val externalCallResult = ExternalCallResult(
+        extensionId = "ext",
+        functionId = "fun",
+        config = Bytes.assertFromString("0a0b"),
+        input = Bytes.assertFromString("c0ff"),
+        output = Bytes.assertFromString("beef"),
+      )
+
+      val exerciseNodeWithoutExternalCallResults =
+        exerciseNode.copy(version = SerializationVersion.VDev)
+      val exerciseNodeWithExternalCallResults =
+        exerciseNodeWithoutExternalCallResults.copy(
+          externalCallResults = ImmArray(externalCallResult)
+        )
+
+      hashExerciseNode(exerciseNodeWithExternalCallResults) shouldBe hashExerciseNode(
+        exerciseNodeWithoutExternalCallResults
+      )
     }
 
     "not produce collision in version" in {

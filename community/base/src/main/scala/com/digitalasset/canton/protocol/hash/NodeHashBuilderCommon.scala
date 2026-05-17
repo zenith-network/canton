@@ -110,15 +110,13 @@ private[hash] abstract class NodeHashBuilderCommon(
           exerciseResult,
           keyOpt,
           byKey,
-          externalCallResults,
+          _externalCallResults,
           version,
         ) =>
       if (choiceAuthorizers.nonEmpty)
         notSupported("choiceAuthorizers in Exercise node", version) // 2.dev feature
-      // TODO(https://github.com/digital-asset/canton/issues/513)
-      // handle external calls
-      if (externalCallResults.nonEmpty)
-        notSupported("externalCallResults in Exercise node", version) // 2.dev feature
+      // External call results are carried and hashed by Canton as ViewParticipantData.
+      // Keep them out of the LF node hash so prepared-submission hashing remains stable.
       if (keyOpt.nonEmpty && version == V1) notSupported("keyOpt in Exercise node", version)
       if (byKey && version == V1) notSupported("byKey in Exercise node", version)
       addContext("Exercise Node")
