@@ -14,6 +14,7 @@ import com.digitalasset.canton.data.{
   ViewPosition,
 }
 import com.digitalasset.canton.lifecycle.FutureUnlessShutdown
+import com.digitalasset.canton.logging.SuppressionRule
 import com.digitalasset.canton.participant.protocol.LedgerEffectAbsolutizer.ViewAbsoluteLedgerEffect
 import com.digitalasset.canton.participant.protocol.conflictdetection.ConflictDetectionHelpers
 import com.digitalasset.canton.protocol.*
@@ -29,6 +30,7 @@ import com.digitalasset.canton.version.ProtocolVersion
 import com.digitalasset.canton.{BaseTestWordSpec, HasExecutionContext, LfPartyId}
 import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
 import com.digitalasset.daml.lf.transaction.ExternalCallResult
+import org.slf4j.event.Level.INFO
 
 final class TransactionConfirmationResponsesFactoryTest
     extends BaseTestWordSpec
@@ -218,6 +220,19 @@ final class TransactionConfirmationResponsesFactoryTest
     checker
   }
 
+  private def externalCallConsistencyCheckerReturning(
+      result: ExternalCallConsistencyChecker.Result
+  ): ExternalCallConsistencyChecking = {
+    val checker = mock[ExternalCallConsistencyChecking]
+    when(
+      checker.check(
+        any[Map[ViewPosition, ViewValidationResult]],
+        any[Set[LfPartyId]],
+      )
+    ).thenReturn(result)
+    checker
+  }
+
   "TransactionConfirmationResponsesFactory" should {
     "not invoke external-call consistency checking for non-dev protocol versions" in {
       val checker = externalCallConsistencyCheckerReturningEmpty
@@ -333,6 +348,69 @@ final class TransactionConfirmationResponsesFactoryTest
       inside(leftResponses.find(_.confirmingParties == Set(signatory)).value) {
         case ConfirmationResponse(_, LocalApprove(), _) =>
           succeed
+      }
+    }
+
+    "bound external-call disagreement rejection details" in {
+      val longExtensionId = Iterator.fill(2000)("e").mkString
+      val example = factory.MultipleRoots
+      val view = withExternalCallResults(
+        withConfirmers(example.rootViews(4), Set(submitter)),
+        ImmArray(
+          externalCallViewResult(
+            nodeId = LfNodeId(0),
+            result = externalCallResult,
+            checkingParties = Set(submitter),
+          )
+        ),
+      )
+      val inconsistency = ExternalCallConsistencyChecker.Inconsistency(
+        key = new ExternalCallConsistencyChecker.ExternalCallKey(
+          extensionId = longExtensionId,
+          functionId = "function",
+          config = Bytes.fromStringUtf8("config"),
+          input = Bytes.fromStringUtf8("input"),
+        ),
+        outputs = Set(
+          Bytes.fromStringUtf8("output"),
+          Bytes.fromStringUtf8("other-output"),
+        ),
+        occurrences = Set(
+          ExternalCallConsistencyChecker.ExternalCallOccurrence(
+            leftViewPosition,
+            LfNodeId(0),
+            callIndex = 0,
+          ),
+          ExternalCallConsistencyChecker.ExternalCallOccurrence(
+            rightViewPosition,
+            LfNodeId(1),
+            callIndex = 0,
+          ),
+        ),
+      )
+      val checker = externalCallConsistencyCheckerReturning(
+        ExternalCallConsistencyChecker.Result(Map(submitter -> inconsistency))
+      )
+
+      val responses = loggerFactory.assertLogs(SuppressionRule.LevelAndAbove(INFO))(
+        createResponses(
+          transactionValidationResult(Map(leftViewPosition -> validationResult(view))),
+          responseFactory(ProtocolVersion.dev, checker),
+        ),
+        entry => {
+          entry.message should include("inconsistent external call results")
+          entry.message should not include longExtensionId
+          entry.message should include("...")
+          entry.message.length should be < 1200
+        },
+      )
+
+      inside(responses.loneElement) {
+        case ConfirmationResponse(_, reject: LocalReject, confirmingParties) =>
+          confirmingParties shouldBe Set(submitter)
+          reject.reason.message should include("inconsistent external call results")
+          reject.reason.message should not include longExtensionId
+          reject.reason.message.length should be < 1200
       }
     }
 

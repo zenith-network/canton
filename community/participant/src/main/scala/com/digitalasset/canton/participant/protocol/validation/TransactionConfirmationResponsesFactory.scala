@@ -32,6 +32,7 @@ class TransactionConfirmationResponsesFactory(
   import com.digitalasset.canton.util.ShowUtil.*
 
   private val protocolVersion = synchronizerId.protocolVersion
+  private val maxExternalCallDisagreementDetailsLength = 1024
 
   /** Takes a `transactionValidationResult` and computes the
     * [[protocol.messages.ConfirmationResponses]], to be sent to the mediator.
@@ -307,7 +308,11 @@ class TransactionConfirmationResponsesFactory(
                         val reject = logged(
                           requestId,
                           LocalRejectError.ConsistencyRejections.ExternalCallResultDisagreement
-                            .Reject(inconsistency.description),
+                            .Reject(
+                              inconsistency.description
+                                .limit(maxExternalCallDisagreementDetailsLength)
+                                .toString
+                            ),
                         ).toLocalReject(protocolVersion)
                         checked(
                           ConfirmationResponse
