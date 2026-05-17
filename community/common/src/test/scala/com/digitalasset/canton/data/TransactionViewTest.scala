@@ -73,6 +73,8 @@ class TransactionViewTest
   private def externalCallResultProto(
       includeNodeId: Boolean = true,
       includeCallIndex: Boolean = true,
+      nodeId: Int = 7,
+      callIndex: Int = 1,
   ): v32.ViewExternalCallResult = {
     val out = ProtoByteString.newOutput()
     val output = CodedOutputStream.newInstance(out)
@@ -81,8 +83,8 @@ class TransactionViewTest
     output.writeBytes(3, externalCallResult.config.toByteString)
     output.writeBytes(4, externalCallResult.input.toByteString)
     output.writeBytes(5, externalCallResult.output.toByteString)
-    if (includeNodeId) output.writeInt32(6, 7)
-    if (includeCallIndex) output.writeInt32(7, 1)
+    if (includeNodeId) output.writeInt32(6, nodeId)
+    if (includeCallIndex) output.writeInt32(7, callIndex)
     externalCallCheckingParties.foreach(party => output.writeString(8, party))
     output.flush()
 
@@ -459,6 +461,22 @@ class TransactionViewTest
           .fromProtoV32(externalCallResultProto(includeCallIndex = false))
           .left
           .value shouldBe ProtoDeserializationError.FieldNotSet("call_index")
+      }
+
+      "reject an external call result with negative node_id" in {
+        ViewParticipantData.ViewExternalCallResult
+          .fromProtoV32(externalCallResultProto(nodeId = -1))
+          .left
+          .value shouldBe ProtoDeserializationError.OtherError("Negative external call node_id: -1")
+      }
+
+      "reject an external call result with negative call_index" in {
+        ViewParticipantData.ViewExternalCallResult
+          .fromProtoV32(externalCallResultProto(callIndex = -1))
+          .left
+          .value shouldBe ProtoDeserializationError.OtherError(
+          "Negative external call call_index: -1"
+        )
       }
     }
 
