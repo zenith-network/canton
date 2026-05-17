@@ -436,13 +436,15 @@ class TransactionViewTest
       }
 
       "reconstruct older view participant data with no external call results" in {
-        val vpd = create(protocolVersion = ProtocolVersion.v35).value
+        forEvery(Seq(ProtocolVersion.v34, ProtocolVersion.v35)) { protocolVersion =>
+          val vpd = create(protocolVersion = protocolVersion).value
 
-        ViewParticipantData
-          .fromByteString(ProtocolVersion.v35, hashOps)(
-            vpd.getCryptographicEvidence
-          )
-          .map(_.unwrap.map(_.externalCallResults)) shouldBe Right(Right(ImmArray.Empty))
+          ViewParticipantData
+            .fromByteString(protocolVersion, hashOps)(
+              vpd.getCryptographicEvidence
+            )
+            .map(_.unwrap.map(_.externalCallResults)) shouldBe Right(Right(ImmArray.Empty))
+        }
       }
 
       "reject an external call result without node_id" in {
