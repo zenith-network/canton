@@ -125,14 +125,12 @@ class LegacyTransactionTreeFactory(
       protocolVersion,
     )
 
-    val submittingAdminParty = participantId.adminParty.toLf
-
     val rootViewDecompositionsF =
       transactionViewDecompositionFactory.fromTransaction(
         topologySnapshot,
         transaction,
         RollbackContext.empty,
-        Some(submittingAdminParty),
+        Some(participantId.adminParty.toLf),
       )
 
     val commonMetadata = CommonMetadata
@@ -178,14 +176,7 @@ class LegacyTransactionTreeFactory(
         )
       }
 
-      rootViews <- createRootViews(
-        rootViewDecompositions,
-        state,
-        contractOfId,
-        topologySnapshot,
-        transaction.unwrap,
-        Some(submittingAdminParty),
-      )
+      rootViews <- createRootViews(rootViewDecompositions, state, contractOfId, topologySnapshot)
 
       _ <-
         if (validatePackageVettings) {
@@ -261,8 +252,6 @@ class LegacyTransactionTreeFactory(
       state: State,
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
-      sourceTransaction: LfVersionedTransaction,
-      submittingAdminPartyO: Option[LfPartyId],
   )(implicit
       traceContext: TraceContext
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, Seq[TransactionView]] = {
@@ -305,15 +294,7 @@ class LegacyTransactionTreeFactory(
         MonadUtil.sequentialTraverse(
           decompositions.zip(MerkleSeq.indicesFromSeq(decompositions.size))
         ) { case (rootView, index) =>
-          createView(
-            rootView,
-            index +: ViewPosition.root,
-            state,
-            fromPreloaded,
-            topologySnapshot,
-            sourceTransaction,
-            submittingAdminPartyO,
-          )
+          createView(rootView, index +: ViewPosition.root, state, fromPreloaded, topologySnapshot)
         }
       }
   }
@@ -324,8 +305,6 @@ class LegacyTransactionTreeFactory(
       state: State,
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
-      sourceTransaction: LfVersionedTransaction,
-      submittingAdminPartyO: Option[LfPartyId],
   )(implicit
       traceContext: TraceContext
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, TransactionView] = {
@@ -342,7 +321,6 @@ class LegacyTransactionTreeFactory(
       List.newBuilder[(LfNodeCreate, RollbackScope)] // contract IDs have already been suffixed
     val coreOtherBuilder = // contract IDs have not yet been suffixed
       List.newBuilder[((LfNodeId, LfActionNode), RollbackScope)]
-    val coreExternalCallResultsBuilder = List.newBuilder[CoreExternalCallResult]
     val childViewsBuilder = Seq.newBuilder[TransactionView]
     val subViewKeyResolutions =
       mutable.Map.empty[LfGlobalKey, LfVersioned[SerializableKeyResolution]]
@@ -355,12 +333,6 @@ class LegacyTransactionTreeFactory(
       case _ => false
     }
     val subviewIndex = TransactionSubviews.indices(nbSubViews).iterator
-    def normalizeNodeIds(nodeIds: Set[LfNodeId]): Map[LfNodeId, LfNodeId] =
-      TransactionTreeFactory.nodeIdNormalizationForView(
-        sourceTransaction,
-        view.nodeId,
-        nodeIds,
-      )
     val createdInView = mutable.Set.empty[LfContractId]
 
     for {
@@ -377,8 +349,6 @@ class LegacyTransactionTreeFactory(
             state,
             contractOfId,
             topologySnapshot,
-            sourceTransaction,
-            submittingAdminPartyO,
           )
             .map { v =>
               childViewsBuilder += v
@@ -415,7 +385,6 @@ class LegacyTransactionTreeFactory(
               case lfNode: LfActionNode =>
                 val suffixedNode = trySuffixNode(state)(nodeId -> lfNode)
                 coreOtherBuilder += ((nodeId, lfNode) -> rbScope)
-                coreExternalCallResultsBuilder ++= externalCallResultsFromCoreNode(nodeId, lfNode)
                 EitherT.pure[FutureUnlessShutdown, TransactionTreeConversionError](suffixedNode)
             }
 
@@ -453,15 +422,13 @@ class LegacyTransactionTreeFactory(
       // that was created in the consequences of the exercise, i.e., we know the suffix only
       // after we have visited the create node.
       coreOtherNodes = coreOtherBuilder.result().map { case (nodeInfo, rbc) =>
-        val (nodeId, _) = nodeInfo
-        (nodeId, checked(trySuffixNode(state)(nodeInfo)), rbc)
+        (checked(trySuffixNode(state)(nodeInfo)), rbc)
       }
-      coreExternalCallResults = coreExternalCallResultsBuilder.result()
       childViews = childViewsBuilder.result()
 
       suffixedRootNode = coreOtherNodes.headOption
-        .map(_._2)
-        .orElse(coreCreatedNodes.headOption.map(_._1))
+        .orElse(coreCreatedNodes.headOption)
+        .map { case (node, _) => node }
         .getOrElse(
           throw new IllegalArgumentException(s"The received view has no core nodes. $view")
         )
@@ -492,8 +459,6 @@ class LegacyTransactionTreeFactory(
         viewParticipantDataSalt,
         contractOfId,
         view.rbContext,
-        coreExternalCallResults,
-        normalizeNodeIds,
       )
 
       // fast-forward the former state over the subtree
@@ -761,7 +726,7 @@ class LegacyTransactionTreeFactory(
 
   private def createViewParticipantData(
       coreCreatedNodes: List[(LfNodeCreate, RollbackScope)],
-      coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackScope)],
+      coreOtherNodes: List[(LfActionNode, RollbackScope)],
       childViews: Seq[TransactionView],
       createdContractInfo: collection.Map[LfContractId, NewContractInstance],
       resolvedKeys: collection.Map[LfGlobalKey, LfVersioned[SerializableKeyResolution]],
@@ -769,12 +734,10 @@ class LegacyTransactionTreeFactory(
       salt: Salt,
       contractOfId: ContractInstanceOfId,
       rbContextCore: RollbackContext,
-      coreExternalCallResults: List[CoreExternalCallResult],
-      normalizeNodeIds: Set[LfNodeId] => Map[LfNodeId, LfNodeId],
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
 
     val consumedInCore =
-      coreOtherNodes.mapFilter { case (_, an, rbScopeOther) =>
+      coreOtherNodes.mapFilter { case (an, rbScopeOther) =>
         // to be considered consumed, archival has to happen in the same rollback scope,
         if (rbScopeOther == rbContextCore.rollbackScope)
           LfTransactionUtil.consumedContractId(an)
@@ -806,7 +769,7 @@ class LegacyTransactionTreeFactory(
     val createdInSameViewOrSubviews = createdInSubviews ++ created.map(_.contract.contractId)
 
     val coreInputs = coreOtherNodes.view
-      .flatMap { case (_, node, _) =>
+      .flatMap { case (node, _) =>
         LfTransactionUtil.usedContractId(node)
       }
       .filterNot(createdInSameViewOrSubviews.contains)
@@ -840,7 +803,6 @@ class LegacyTransactionTreeFactory(
             rollbackContext = rbContextCore,
             salt = salt,
             protocolVersion = protocolVersion,
-            externalCallResults = viewExternalCallResults(coreExternalCallResults, normalizeNodeIds),
           )
         )
         .leftMap[TransactionTreeConversionError](ViewParticipantDataError.apply)
@@ -916,28 +878,17 @@ class LegacyTransactionTreeFactory(
       legacyKeyResolver.asCidOptionMap,
     )
 
-    val submittingAdminPartyO =
-      submittingAdminPartyForReconstruction(submittingParticipantO, rootPosition)
-
     val decompositionsF =
       transactionViewDecompositionFactory.fromTransaction(
         topologySnapshot,
         transaction,
         rbContext,
-        submittingAdminPartyO,
+        submittingParticipantO.map(_.adminParty.toLf),
       )
     for {
       decompositions <- EitherT.right(decompositionsF)
       decomposition = checked(decompositions.head)
-      view <- createView(
-        decomposition,
-        rootPosition,
-        state,
-        contractOfId,
-        topologySnapshot,
-        transaction.unwrap,
-        submittingAdminPartyO,
-      )
+      view <- createView(decomposition, rootPosition, state, contractOfId, topologySnapshot)
       suffixedNodes = state.suffixedNodes() transform {
         // Recover the children
         case (nodeId, ne: LfNodeExercises) =>
