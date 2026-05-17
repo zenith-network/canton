@@ -101,7 +101,9 @@ class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
     sut.check(
       Map(
         ViewPosition.root -> validationResult(left),
-        ViewPosition(List(ViewPosition.MerkleSeqIndex(List(ViewPosition.MerkleSeqIndex.Direction.Right)))) ->
+        ViewPosition(
+          List(ViewPosition.MerkleSeqIndex(List(ViewPosition.MerkleSeqIndex.Direction.Right)))
+        ) ->
           validationResult(right),
       ),
       hostedParties,
