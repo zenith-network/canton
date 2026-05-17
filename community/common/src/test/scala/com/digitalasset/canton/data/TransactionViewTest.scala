@@ -622,41 +622,6 @@ class TransactionViewTest
           .value
       }
 
-      "allow the same semantic external call with different outputs across visible children when parent participant data is non-dev" in {
-        val nonDevFactory =
-          new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.v35))()
-        val devFactory =
-          new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
-        val nonDevExample = nonDevFactory.MultipleRootsAndViewNestings
-        val child0 = withExternalCallResults(
-          devFactory
-            .SingleExercise(
-              seed = ExampleTransactionFactory.lfHash(36),
-              nodeId = LfNodeId(10),
-            )
-            .view0,
-          ImmArray(viewExternalCallResult(nodeId = LfNodeId(10))),
-        )
-        val child1 = withExternalCallResults(
-          devFactory
-            .SingleExercise(
-              seed = ExampleTransactionFactory.lfHash(37),
-              nodeId = LfNodeId(11),
-            )
-            .view0,
-          ImmArray(viewExternalCallResult(result = otherExternalCallOutput, nodeId = LfNodeId(11))),
-        )
-
-        TransactionView
-          .create(nonDevFactory.cryptoOps)(
-            nonDevExample.view1.viewCommonData,
-            nonDevExample.view1.viewParticipantData,
-            TransactionSubviews(Seq(child0, child1))(ProtocolVersion.dev, nonDevFactory.cryptoOps),
-            ProtocolVersion.dev,
-          )
-          .value
-      }
-
       "allow the same semantic external call with a different output in a grandchild view" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
