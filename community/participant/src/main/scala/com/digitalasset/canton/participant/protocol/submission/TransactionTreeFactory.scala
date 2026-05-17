@@ -35,7 +35,7 @@ import com.digitalasset.canton.tracing.TraceContext
 import com.digitalasset.canton.util.{ContractHasher, LfTransactionUtil}
 import com.digitalasset.canton.version.ProtocolVersion
 import com.digitalasset.daml.lf.data.ImmArray
-import com.digitalasset.daml.lf.transaction.LegacyTransactionErrors
+import com.digitalasset.daml.lf.transaction.{ExternalCallResult, LegacyTransactionErrors}
 
 import java.util.UUID
 import scala.annotation.tailrec
@@ -111,65 +111,102 @@ object TransactionTreeFactory {
   type ContractInstanceOfId =
     LfContractId => EitherT[FutureUnlessShutdown, ContractLookupError, GenContractInstance]
 
+  /** Computes view-local node ids for the requested LF node ids, using the same pre-order traversal
+    * as [[LfVersionedTransaction.nodeIdNormalization]] without materializing a full subtree
+    * normalization map.
+    */
+  @SuppressWarnings(Array("org.wartremover.warts.Var"))
   private[submission] def nodeIdNormalizationForView(
       transaction: LfVersionedTransaction,
       viewRootNodeId: LfNodeId,
-  ): Map[LfNodeId, LfNodeId] = {
-    val nodes = Map.newBuilder[LfNodeId, LfNode]
+      nodeIds: Set[LfNodeId],
+  ): Map[LfNodeId, LfNodeId] =
+    if (nodeIds.isEmpty) Map.empty
+    else {
+      val normalizedNodeIds = Map.newBuilder[LfNodeId, LfNodeId]
+      var nextNodeIndex = 0
+      var remainingNodeIds = nodeIds
 
-    @tailrec
-    def go(toVisit: List[LfNodeId]): Unit =
-      toVisit match {
-        case Nil =>
-        case nodeId :: rest =>
-          val node = transaction.nodes.getOrElse(
-            nodeId,
-            throw new IllegalStateException(s"Did not find $nodeId in node map"),
-          )
-          nodes += nodeId -> node
-          val children = node match {
-            case exercise: LfNodeExercises => exercise.children.toList
-            case rollback: LfNodeRollback => rollback.children.toList
-            case _ => List.empty
+      @tailrec
+      def go(toVisit: List[LfNodeId]): Unit =
+        if (remainingNodeIds.isEmpty) ()
+        else
+          toVisit match {
+            case Nil =>
+            case nodeId :: rest =>
+              val node = transaction.nodes.getOrElse(
+                nodeId,
+                throw new IllegalStateException(s"Did not find $nodeId in node map"),
+              )
+              if (remainingNodeIds(nodeId)) {
+                normalizedNodeIds += nodeId -> LfNodeId(nextNodeIndex)
+                remainingNodeIds -= nodeId
+              }
+              nextNodeIndex += 1
+              val children = node match {
+                case exercise: LfNodeExercises => exercise.children.toList
+                case rollback: LfNodeRollback => rollback.children.toList
+                case _ => List.empty
+              }
+              go(children ++ rest)
           }
-          go(children ++ rest)
-      }
 
-    go(List(viewRootNodeId))
+      go(List(viewRootNodeId))
 
-    LfVersionedTransaction(
-      transaction.version,
-      nodes.result(),
-      ImmArray(viewRootNodeId),
-    ).nodeIdNormalization
-  }
+      val result = normalizedNodeIds.result()
+      val missingNodeIds = nodeIds -- result.keySet
+      if (missingNodeIds.nonEmpty)
+        throw new IllegalStateException(
+          s"Did not find external call node ids in view-local node map: $missingNodeIds"
+        )
+      result
+    }
+
+  private final case class CoreExternalCallResult(
+      nodeId: LfNodeId,
+      exercise: LfNodeExercises,
+      result: ExternalCallResult,
+      callIndex: Int,
+  )
 
   private[submission] def externalCallResultsFromCoreNodes(
       coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackContext.RollbackScope)],
-      normalizeNodeId: LfNodeId => LfNodeId,
+      normalizeNodeIds: Set[LfNodeId] => Map[LfNodeId, LfNodeId],
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
     val coreExternalCallResults = coreOtherNodes.flatMap {
       case (nodeId, exercise: LfNodeExercises, _) =>
         exercise.externalCallResults.toSeq.zipWithIndex.map { case (result, callIndex) =>
-          ViewParticipantData.ViewExternalCallResult(
-            result = result,
-            nodeId = normalizeNodeId(nodeId),
-            callIndex = callIndex,
-            checkingParties = checkingPartiesForNode(
-              nodeId,
-              exercise,
-              originalRootNodeIds,
-              submittingAdminPartyO,
-            ),
-          )
+          CoreExternalCallResult(nodeId, exercise, result, callIndex)
         }
       case _ => Seq.empty
     }
 
     if (coreExternalCallResults.isEmpty) ImmArray.Empty
-    else ImmArray.from(coreExternalCallResults)
+    else {
+      val normalizedNodeIds = normalizeNodeIds(coreExternalCallResults.map(_.nodeId).toSet)
+      ImmArray.from(
+        coreExternalCallResults.map { externalCall =>
+          ViewParticipantData.ViewExternalCallResult(
+            result = externalCall.result,
+            nodeId = normalizedNodeIds.getOrElse(
+              externalCall.nodeId,
+              throw new IllegalStateException(
+                s"Did not find ${externalCall.nodeId} in view-local node map"
+              ),
+            ),
+            callIndex = externalCall.callIndex,
+            checkingParties = checkingPartiesForNode(
+              externalCall.nodeId,
+              externalCall.exercise,
+              originalRootNodeIds,
+              submittingAdminPartyO,
+            ),
+          )
+        }
+      )
+    }
   }
 
   private def checkingPartiesForNode(

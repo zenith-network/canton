@@ -358,12 +358,11 @@ class LegacyTransactionTreeFactory(
       case _ => false
     }
     val subviewIndex = TransactionSubviews.indices(nbSubViews).iterator
-    lazy val nodeIdNormalization =
-      TransactionTreeFactory.nodeIdNormalizationForView(sourceTransaction, view.nodeId)
-    def normalizeNodeId(nodeId: LfNodeId): LfNodeId =
-      nodeIdNormalization.getOrElse(
-        nodeId,
-        throw new IllegalStateException(s"Did not find $nodeId in view-local node map"),
+    def normalizeNodeIds(nodeIds: Set[LfNodeId]): Map[LfNodeId, LfNodeId] =
+      TransactionTreeFactory.nodeIdNormalizationForView(
+        sourceTransaction,
+        view.nodeId,
+        nodeIds,
       )
     val createdInView = mutable.Set.empty[LfContractId]
 
@@ -495,7 +494,7 @@ class LegacyTransactionTreeFactory(
         viewParticipantDataSalt,
         contractOfId,
         view.rbContext,
-        normalizeNodeId,
+        normalizeNodeIds,
         originalRootNodeIds,
         submittingAdminPartyO,
       )
@@ -773,7 +772,7 @@ class LegacyTransactionTreeFactory(
       salt: Salt,
       contractOfId: ContractInstanceOfId,
       rbContextCore: RollbackContext,
-      normalizeNodeId: LfNodeId => LfNodeId,
+      normalizeNodeIds: Set[LfNodeId] => Map[LfNodeId, LfNodeId],
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
@@ -847,7 +846,7 @@ class LegacyTransactionTreeFactory(
             protocolVersion = protocolVersion,
             externalCallResults = externalCallResultsFromCoreNodes(
               coreOtherNodes,
-              normalizeNodeId,
+              normalizeNodeIds,
               originalRootNodeIds,
               submittingAdminPartyO,
             ),
