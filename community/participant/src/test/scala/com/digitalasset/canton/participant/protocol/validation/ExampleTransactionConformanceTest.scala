@@ -11,6 +11,7 @@ import com.daml.scalautil.Statement.discard
 import com.digitalasset.canton.crypto.provider.symbolic.SymbolicPureCrypto
 import com.digitalasset.canton.data.*
 import com.digitalasset.canton.lifecycle.FutureUnlessShutdown
+import com.digitalasset.canton.participant.DefaultParticipantStateValues
 import com.digitalasset.canton.participant.protocol.EngineController.{
   EngineAbortStatus,
   GetEngineAbortStatus,
@@ -34,6 +35,7 @@ import com.digitalasset.canton.util.ContractValidator.ContractAuthenticatorFn
 import com.digitalasset.canton.util.FutureInstances.*
 import com.digitalasset.canton.util.PackageConsumer.PackageResolver
 import com.digitalasset.canton.util.{ContractValidator, TestContractHasher}
+import com.digitalasset.canton.version.ProtocolVersion
 import com.digitalasset.canton.{
   BaseTest,
   HasExecutionContext,
@@ -43,9 +45,12 @@ import com.digitalasset.canton.{
   LfPackageVersion,
   LfPartyId,
 }
+import com.digitalasset.daml.lf.CantonOnly
+import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
 import com.digitalasset.daml.lf.data.Ref.{PackageId, PackageName}
 import com.digitalasset.daml.lf.language.Ast.{DeclaredImports, Expr, GenPackage, PackageMetadata}
 import com.digitalasset.daml.lf.language.{Ast, LanguageVersion}
+import com.digitalasset.daml.lf.transaction.ExternalCallResult
 import org.scalatest.wordspec.AsyncWordSpec
 
 import java.time.Duration
@@ -82,7 +87,7 @@ class ExampleTransactionConformanceTest
 
   val pureCrypto = new SymbolicPureCrypto()
 
-  forAll(Table("contract ID version", CantonContractIdVersion.all*)) { contractIdVersion =>
+  CantonContractIdVersion.all.foreach { contractIdVersion =>
     val factory: ExampleTransactionFactory = new ExampleTransactionFactory()(
       cantonContractIdVersion = contractIdVersion
     )
@@ -136,6 +141,74 @@ class ExampleTransactionConformanceTest
       }
     }
 
+    def reinterpretTransaction(
+        example: ExampleTransaction,
+        transaction: WellFormedTransaction[WellFormedTransaction.WithoutSuffixes],
+    ): HasReinterpret = new HasReinterpret {
+
+      override def reinterpret(
+          contracts: ReplayContractLookup,
+          contractAuthenticator: ContractAuthenticatorFn,
+          submitters: Set[LfPartyId],
+          command: LfCommand,
+          topologySnapshot: TopologySnapshot,
+          ledgerTime: CantonTimestamp,
+          preparationTime: CantonTimestamp,
+          rootSeed: Option[LfHash],
+          packageResolution: Map[PackageName, PackageId],
+          expectFailure: Boolean,
+          getEngineAbortStatus: GetEngineAbortStatus,
+      )(implicit traceContext: TraceContext): EitherT[
+        FutureUnlessShutdown,
+        DAMLe.ReinterpretationError,
+        ReInterpretationResult,
+      ] = {
+        ledgerTime shouldEqual factory.ledgerTime
+        preparationTime shouldEqual factory.preparationTime
+
+        val matchesView = example.reinterpretedSubtransactions.exists {
+          case (viewTree, (tx, metadata, _), _) =>
+            viewTree.viewParticipantData.rootAction.command == command &&
+            metadata.seeds.get(tx.roots(0)) == rootSeed
+        }
+        matchesView shouldBe true
+
+        EitherT.rightT(
+          ReInterpretationResult(
+            transaction.unwrap,
+            transaction.metadata,
+            example.keyResolver,
+            UsedPackages(Set.empty, Set.empty),
+            LedgerTimeBoundaries.unconstrained,
+          )
+        )
+      }
+    }
+
+    def withExternalCallResults(
+        example: ExampleTransaction,
+        nodeId: LfNodeId,
+        results: ImmArray[ExternalCallResult],
+    ): WellFormedTransaction[WellFormedTransaction.WithoutSuffixes] = {
+      val transaction = example.versionedUnsuffixedTransaction
+      val exercise = transaction.nodes(nodeId).asInstanceOf[LfNodeExercises]
+      val updatedTransaction = CantonOnly.lfVersionedTransaction(
+        nodes = transaction.nodes.updated(
+          nodeId,
+          exercise.copy(
+            externalCallResults = results,
+            version = LfSerializationVersion.VDev,
+          ),
+        ),
+        roots = transaction.roots,
+      )
+      WellFormedTransaction.checkOrThrow(
+        updatedTransaction,
+        example.metadata,
+        WellFormedTransaction.WithoutSuffixes,
+      )
+    }
+
     def viewsWithNoInputKeys(
         rootViews: Seq[FullTransactionViewTree]
     ): NonEmpty[Seq[(FullTransactionViewTree, Seq[(TransactionView, LfGlobalKeyMapping)])]] =
@@ -178,6 +251,15 @@ class ExampleTransactionConformanceTest
         views: NonEmpty[Seq[(FullTransactionViewTree, Seq[(TransactionView, LfGlobalKeyMapping)])]],
         ips: TopologySnapshot = factory.topologySnapshot,
         reInterpretedTopLevelViews: ModelConformanceChecker.LazyAsyncReInterpretationMap = Map.empty,
+    ): EitherT[Future, ErrorWithSubTransaction[Unit], Result] =
+      checkWithProtocolVersion(mcc, views, ips, reInterpretedTopLevelViews, testedProtocolVersion)
+
+    def checkWithProtocolVersion(
+        mcc: ModelConformanceChecker,
+        views: NonEmpty[Seq[(FullTransactionViewTree, Seq[(TransactionView, LfGlobalKeyMapping)])]],
+        ips: TopologySnapshot,
+        reInterpretedTopLevelViews: ModelConformanceChecker.LazyAsyncReInterpretationMap,
+        protocolVersion: ProtocolVersion,
     ): EitherT[Future, ErrorWithSubTransaction[Unit], Result] = {
       val rootViewTrees = views.map(_._1)
       val commonData = TransactionProcessingSteps.tryCommonData(rootViewTrees)
@@ -190,15 +272,21 @@ class ExampleTransactionConformanceTest
           commonData,
           getEngineAbortStatus = () => EngineAbortStatus.notAborted,
           reInterpretedTopLevelViews,
-          testedProtocolVersion,
+          protocolVersion,
         )
         .failOnShutdown
     }
 
     def buildUnderTest(reinterpretCommand: HasReinterpret): ModelConformanceChecker =
+      buildUnderTestWithFactory(reinterpretCommand, transactionTreeFactory)
+
+    def buildUnderTestWithFactory(
+        reinterpretCommand: HasReinterpret,
+        treeFactory: TransactionTreeFactory,
+    ): ModelConformanceChecker =
       new ModelConformanceChecker(
         reinterpretCommand,
-        transactionTreeFactory,
+        treeFactory,
         submittingParticipant,
         ContractValidator.AllowAll,
         packageResolver,
@@ -303,6 +391,95 @@ class ExampleTransactionConformanceTest
           }
         }
       }
+
+      "reject external call records with tampered checking parties" in {
+        val devFactory = new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))(
+          psid = factory.psid.copy(protocolVersion = ProtocolVersion.dev),
+          cantonContractIdVersion = contractIdVersion,
+        )
+        val devTreeFactory = TransactionTreeFactory(
+          ExampleTransactionFactory.submittingParticipant,
+          devFactory.psid,
+          devFactory.cantonContractIdVersion,
+          devFactory.cryptoOps,
+          TestContractHasher.Async,
+          loggerFactory,
+        )
+        val externalCallResult = ExternalCallResult(
+          extensionId = "extension",
+          functionId = "function",
+          config = Bytes.fromStringUtf8("config"),
+          input = Bytes.fromStringUtf8("input"),
+          output = Bytes.fromStringUtf8("output"),
+        )
+        val example = devFactory.SingleExercise(devFactory.deriveNodeSeed(0))
+        val transaction =
+          withExternalCallResults(example, LfNodeId(0), ImmArray(externalCallResult))
+        val contractOfId: LfContractId => EitherT[
+          FutureUnlessShutdown,
+          TransactionTreeFactory.ContractLookupError,
+          GenContractInstance,
+        ] =
+          cId =>
+            EitherT.fromEither[FutureUnlessShutdown](
+              example.inputContracts
+                .get(cId)
+                .toRight(
+                  TransactionTreeFactory.ContractLookupError(cId, "Not found")
+                )
+            )
+
+        val createTree = devTreeFactory.createTransactionTree(
+          transaction = transaction,
+          submitterInfo = DefaultParticipantStateValues.submitterInfo(List(submitter)),
+          workflowId = None,
+          mediator = devFactory.mediatorGroup,
+          transactionSeed = devFactory.transactionSeed,
+          transactionUuid = devFactory.transactionUuid,
+          topologySnapshot = devFactory.topologySnapshot,
+          contractOfId = contractOfId,
+          legacyKeyResolver = example.keyResolver,
+          maxSequencingTime = devFactory.ledgerTime.plusSeconds(100),
+          validatePackageVettings = true,
+        )
+
+        for {
+          genTree <- valueOrFail(createTree.failOnShutdown)("create transaction tree")
+          fullTree = FullTransactionViewTree.tryCreate(genTree)
+          tamperedTree = FullTransactionViewTree.Optics.tree
+            .andThen(GenTransactionTree.rootViewsUnsafe)
+            .andThen(
+              MerkleSeq.Optics.toSeq[TransactionView](devFactory.cryptoOps, ProtocolVersion.dev)
+            )
+            .andThen(MerkleTree.Optics.unblindedSeq[TransactionView])
+            .andThen(TransactionView.Optics.viewParticipantDataUnsafe)
+            .andThen(MerkleTree.Optics.unblinded[ViewParticipantData])
+            .andThen(ViewParticipantData.Optics.externalCallResultsUnsafe)
+            .modify(results =>
+              ImmArray.from(results.toSeq.map(_.copy(checkingParties = Set.empty)))
+            )(fullTree)
+          _ = tamperedTree.validated shouldBe Right(tamperedTree)
+          result <- checkWithProtocolVersion(
+            buildUnderTestWithFactory(reinterpretTransaction(example, transaction), devTreeFactory),
+            viewsWithNoInputKeys(Seq(tamperedTree)),
+            devFactory.topologySnapshot,
+            Map.empty,
+            ProtocolVersion.dev,
+          ).value
+        } yield inside(result) { case Left(ErrorWithSubTransaction(errors, _, _)) =>
+          inside(errors.head) { case ViewReconstructionError(received, reconstructed) =>
+            val receivedRecord =
+              received.viewParticipantData.tryUnwrap.externalCallResults.toSeq.loneElement
+            val reconstructedRecord =
+              reconstructed.viewParticipantData.tryUnwrap.externalCallResults.toSeq.loneElement
+
+            receivedRecord.checkingParties shouldBe Set.empty
+            reconstructedRecord.checkingParties shouldBe Set(submitter)
+          }
+        }
+      }
+
+      ()
     }
   }
 }
