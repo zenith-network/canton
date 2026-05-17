@@ -5,6 +5,7 @@ package com.digitalasset.canton.protocol.hash.v3
 
 import com.digitalasset.canton.crypto.Hash
 import com.digitalasset.canton.protocol.LfHash
+import com.digitalasset.canton.protocol.hash.TransactionHash.NodeHashingError
 import com.digitalasset.canton.protocol.hash.{BaseNodeHashTest, HashTracer}
 import com.digitalasset.canton.version.HashingSchemeVersion
 import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
@@ -445,6 +446,22 @@ class NodeHashTest extends BaseNodeHashTest {
 
       hashExerciseNode(exerciseNodeWithExternalCallResults) shouldBe hashExerciseNode(
         exerciseNodeWithoutExternalCallResults
+      )
+    }
+
+    "reject external call results on non-dev exercise nodes" in {
+      val externalCallResult = ExternalCallResult(
+        extensionId = "ext",
+        functionId = "fun",
+        config = Bytes.assertFromString("0a0b"),
+        input = Bytes.assertFromString("c0ff"),
+        output = Bytes.assertFromString("beef"),
+      )
+
+      a[NodeHashingError.UnsupportedFeature] shouldBe thrownBy(
+        hashExerciseNode(
+          exerciseNode.copy(externalCallResults = ImmArray(externalCallResult))
+        )
       )
     }
 

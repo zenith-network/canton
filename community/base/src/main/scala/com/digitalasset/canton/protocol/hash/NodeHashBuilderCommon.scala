@@ -7,7 +7,7 @@ import com.digitalasset.canton.crypto.HashPurpose
 import com.digitalasset.canton.protocol.hash.TransactionHash.NodeHashingError
 import com.digitalasset.canton.protocol.{LfHash, LfSerializationVersion, hash}
 import com.digitalasset.canton.version.HashingSchemeVersion
-import com.digitalasset.daml.lf.transaction.SerializationVersion.V1
+import com.digitalasset.daml.lf.transaction.SerializationVersion.{V1, VDev}
 import com.digitalasset.daml.lf.transaction.{Node, NodeId, SerializationVersion}
 import com.digitalasset.daml.lf.value.Value
 
@@ -110,11 +110,13 @@ private[hash] abstract class NodeHashBuilderCommon(
           exerciseResult,
           keyOpt,
           byKey,
-          _externalCallResults,
+          externalCallResults,
           version,
         ) =>
       if (choiceAuthorizers.nonEmpty)
         notSupported("choiceAuthorizers in Exercise node", version) // 2.dev feature
+      if (externalCallResults.nonEmpty && version != VDev)
+        notSupported("externalCallResults in Exercise node", version)
       // External call results are carried and hashed by Canton as ViewParticipantData.
       // Keep them out of the LF node hash so prepared-submission hashing remains stable.
       if (keyOpt.nonEmpty && version == V1) notSupported("keyOpt in Exercise node", version)
