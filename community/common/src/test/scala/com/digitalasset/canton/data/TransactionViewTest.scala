@@ -363,6 +363,18 @@ class TransactionViewTest
       }
     }
 
+    "external call results on a non-dev protocol version" must {
+      "reject creation" in {
+        create(
+          actionDescription = exerciseActionDescription,
+          coreInputs = exerciseCoreInputs,
+          externalCallResults = ImmArray(viewExternalCallResult(nodeId = LfNodeId(7))),
+          protocolVersion = ProtocolVersion.v35,
+        ).left.value shouldBe
+          s"External call results are supported only in protocol version ${ProtocolVersion.dev}"
+      }
+    }
+
     "deserialized" must {
 
       "reconstruct unkeyed view participant data" in {
