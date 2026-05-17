@@ -76,7 +76,8 @@ import scala.math.Ordered.orderingToOrdered
   * @throws ViewParticipantData$.InvalidViewParticipantData
   *   if [[createdCore]] contains two elements with the same contract id, if
   *   [[coreInputs]]`(id).contractId != id` if [[createdInSubviewArchivedInCore]] overlaps with
-  *   [[createdCore]]'s ids.
+  *   [[createdCore]]'s ids, or if [[externalCallResults]] is non-empty for a non-exercise root
+  *   action.
   * @throws com.digitalasset.canton.serialization.SerializationCheckFailed
   *   if this instance cannot be serialized
   */
@@ -140,6 +141,13 @@ final case class ViewParticipantData private (
       throw InvalidViewParticipantData(
         s"External call results are supported only in protocol version ${ProtocolVersion.dev}"
       )
+
+    if (externalCallResults.nonEmpty)
+      actionDescription match {
+        case _: ExerciseActionDescription => ()
+        case _ =>
+          throw InvalidViewParticipantData("External call results require an exercise root action")
+      }
 
     externalCallResults.foreach { result =>
       if (result.nodeId.index < 0)
@@ -429,7 +437,8 @@ object ViewParticipantData
     *   [[ViewParticipantData.actionDescription]] is a
     *   [[com.digitalasset.canton.data.ActionDescription.ExerciseActionDescription]] or
     *   [[com.digitalasset.canton.data.ActionDescription.FetchActionDescription]] and the input
-    *   contract is not in [[ViewParticipantData.coreInputs]]
+    *   contract is not in [[ViewParticipantData.coreInputs]], or if
+    *   [[ViewParticipantData.externalCallResults]] is non-empty for a non-exercise root action
     * @throws com.digitalasset.canton.serialization.SerializationCheckFailed
     *   if this instance cannot be serialized
     */
@@ -471,7 +480,8 @@ object ViewParticipantData
     * [[ViewParticipantData.actionDescription]] is a
     * [[com.digitalasset.canton.data.ActionDescription.ExerciseActionDescription]] or
     * [[com.digitalasset.canton.data.ActionDescription.FetchActionDescription]] and the input
-    * contract is not in [[ViewParticipantData.coreInputs]]
+    * contract is not in [[ViewParticipantData.coreInputs]], or if
+    * [[ViewParticipantData.externalCallResults]] is non-empty for a non-exercise root action
     */
   def create(hashOps: HashOps)(
       coreInputs: Map[LfContractId, InputContract],

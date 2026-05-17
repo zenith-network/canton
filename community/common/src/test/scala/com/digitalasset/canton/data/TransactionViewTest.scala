@@ -96,6 +96,16 @@ class TransactionViewTest
       defaultPackagePreference,
     )
 
+  private val exerciseActionDescription: ActionDescription =
+    ActionDescription.tryFromLfActionNode(
+      ExampleTransactionFactory.exerciseNodeWithoutChildren(absoluteId),
+      Some(nodeSeed),
+      defaultPackagePreference,
+    )
+
+  private def exerciseCoreInputs: Map[LfContractId, GenContractInstance] =
+    Map(absoluteId -> ExampleContractFactory.build(overrideContractId = Some(absoluteId)))
+
   forEvery(factory.standardHappyCases) { example =>
     s"The views of $example" when {
 
@@ -326,6 +336,8 @@ class TransactionViewTest
     "external call results have duplicate occurrence identities" must {
       "reject creation" in {
         create(
+          actionDescription = exerciseActionDescription,
+          coreInputs = exerciseCoreInputs,
           externalCallResults = ImmArray(
             viewExternalCallResult(nodeId = LfNodeId(7), callIndex = 1),
             viewExternalCallResult(
@@ -337,6 +349,15 @@ class TransactionViewTest
           protocolVersion = ProtocolVersion.dev,
         ).left.value shouldBe
           "externalCallResults contains duplicate occurrence (node id 7, call index 1)"
+      }
+    }
+
+    "external call results on a non-exercise root action" must {
+      "reject creation" in {
+        create(
+          externalCallResults = ImmArray(viewExternalCallResult(nodeId = LfNodeId(7))),
+          protocolVersion = ProtocolVersion.dev,
+        ).left.value shouldBe "External call results require an exercise root action"
       }
     }
 
@@ -395,6 +416,8 @@ class TransactionViewTest
 
       "reconstruct dev external call results" in {
         val vpd = create(
+          actionDescription = exerciseActionDescription,
+          coreInputs = exerciseCoreInputs,
           externalCallResults = ImmArray(
             viewExternalCallResult(
               nodeId = LfNodeId(7),
@@ -448,6 +471,7 @@ class TransactionViewTest
       "tolerate a covered exact duplicate in a child view" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
+        val example = devFactory.MultipleRootsAndViewNestings
         val parent = withExternalCallResults(
           devFactory.SingleExercise(seed = ExampleTransactionFactory.lfHash(30)).view0,
           ImmArray(
@@ -458,7 +482,7 @@ class TransactionViewTest
           ),
         )
         val child = withExternalCallResults(
-          devFactory.SingleFetch().view0,
+          example.view11,
           ImmArray(viewExternalCallResult(nodeId = LfNodeId(2))),
         )
 
@@ -478,12 +502,13 @@ class TransactionViewTest
       "reject the same semantic external call with different outputs" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
+        val example = devFactory.MultipleRootsAndViewNestings
         val parent = withExternalCallResults(
           devFactory.SingleExercise(seed = ExampleTransactionFactory.lfHash(31)).view0,
           ImmArray(viewExternalCallResult(nodeId = LfNodeId(1))),
         )
         val child = withExternalCallResults(
-          devFactory.SingleFetch().view0,
+          example.view11,
           ImmArray(viewExternalCallResult(result = otherExternalCallOutput, nodeId = LfNodeId(2))),
         )
 
@@ -503,15 +528,25 @@ class TransactionViewTest
       "reject the same semantic external call with different outputs across visible children when parent participant data is blinded" in {
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
-        val example = devFactory.MultipleRootsAndViewNestings
         val child0 = withExternalCallResults(
-          example.view10,
+          devFactory
+            .SingleExercise(
+              seed = ExampleTransactionFactory.lfHash(34),
+              nodeId = LfNodeId(10),
+            )
+            .view0,
           ImmArray(viewExternalCallResult(nodeId = LfNodeId(10))),
         )
         val child1 = withExternalCallResults(
-          example.view11,
+          devFactory
+            .SingleExercise(
+              seed = ExampleTransactionFactory.lfHash(35),
+              nodeId = LfNodeId(11),
+            )
+            .view0,
           ImmArray(viewExternalCallResult(result = otherExternalCallOutput, nodeId = LfNodeId(11))),
         )
+        val example = devFactory.MultipleRootsAndViewNestings
 
         TransactionView
           .create(devFactory.cryptoOps)(
@@ -530,13 +565,22 @@ class TransactionViewTest
         val devFactory =
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
         val nonDevExample = nonDevFactory.MultipleRootsAndViewNestings
-        val devExample = devFactory.MultipleRootsAndViewNestings
         val child0 = withExternalCallResults(
-          devExample.view10,
+          devFactory
+            .SingleExercise(
+              seed = ExampleTransactionFactory.lfHash(36),
+              nodeId = LfNodeId(10),
+            )
+            .view0,
           ImmArray(viewExternalCallResult(nodeId = LfNodeId(10))),
         )
         val child1 = withExternalCallResults(
-          devExample.view11,
+          devFactory
+            .SingleExercise(
+              seed = ExampleTransactionFactory.lfHash(37),
+              nodeId = LfNodeId(11),
+            )
+            .view0,
           ImmArray(viewExternalCallResult(result = otherExternalCallOutput, nodeId = LfNodeId(11))),
         )
 
@@ -560,7 +604,12 @@ class TransactionViewTest
           ImmArray(viewExternalCallResult(nodeId = LfNodeId(1))),
         )
         val grandchild = withExternalCallResults(
-          example.view110,
+          devFactory
+            .SingleExercise(
+              seed = ExampleTransactionFactory.lfHash(38),
+              nodeId = LfNodeId(110),
+            )
+            .view0,
           ImmArray(
             viewExternalCallResult(result = otherExternalCallOutput, nodeId = LfNodeId(110))
           ),
@@ -590,14 +639,14 @@ class TransactionViewTest
           new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
         val example = devFactory.MultipleRoots
         val root0 = withExternalCallResults(
-          example.rootViews(0),
+          example.rootViews(4),
           ImmArray(viewExternalCallResult(nodeId = LfNodeId(0))),
         )
         val root1 = withExternalCallResults(
-          example.rootViews(1),
+          example.rootViews(5),
           ImmArray(viewExternalCallResult(result = otherExternalCallOutput, nodeId = LfNodeId(1))),
         )
-        val rootViews = example.rootViews.updated(0, root0).updated(1, root1)
+        val rootViews = example.rootViews.updated(4, root0).updated(5, root1)
 
         GenTransactionTree
           .create(devFactory.cryptoOps)(
