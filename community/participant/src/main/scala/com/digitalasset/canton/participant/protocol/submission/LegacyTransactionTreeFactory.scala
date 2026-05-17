@@ -847,7 +847,6 @@ class LegacyTransactionTreeFactory(
             protocolVersion = protocolVersion,
             externalCallResults = externalCallResultsFromCoreNodes(
               coreOtherNodes,
-              childViews,
               normalizeNodeId,
               originalRootNodeIds,
               submittingAdminPartyO,

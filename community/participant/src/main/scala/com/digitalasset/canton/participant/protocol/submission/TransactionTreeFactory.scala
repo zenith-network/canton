@@ -39,7 +39,6 @@ import com.digitalasset.daml.lf.transaction.LegacyTransactionErrors
 
 import java.util.UUID
 import scala.annotation.tailrec
-import scala.collection.mutable
 import scala.concurrent.ExecutionContext
 
 trait TransactionTreeFactory {
@@ -147,7 +146,6 @@ object TransactionTreeFactory {
 
   private[submission] def externalCallResultsFromCoreNodes(
       coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackContext.RollbackScope)],
-      childViews: Seq[TransactionView],
       normalizeNodeId: LfNodeId => LfNodeId,
       originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
@@ -171,7 +169,7 @@ object TransactionTreeFactory {
     }
 
     if (coreExternalCallResults.isEmpty) ImmArray.Empty
-    else suppressExternalCallResultsCoveredBySubviews(coreExternalCallResults, childViews)
+    else ImmArray.from(coreExternalCallResults)
   }
 
   private def checkingPartiesForNode(
@@ -186,26 +184,6 @@ object TransactionTreeFactory {
       .fold[Set[LfPartyId]](Set.empty)(party => Set(party)) |
       LfTransactionUtil.signatoriesOrMaintainers(node) |
       LfTransactionUtil.actingParties(node)
-
-  private def suppressExternalCallResultsCoveredBySubviews(
-      coreExternalCallResults: Seq[ViewParticipantData.ViewExternalCallResult],
-      childViews: Seq[TransactionView],
-  ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
-    val coveredBySubviews = mutable.ArrayBuffer.from(
-      childViews
-        .flatMap(_.flatten)
-        .flatMap(_.viewParticipantData.tryUnwrap.externalCallResults.toSeq)
-    )
-    val retained = coreExternalCallResults.filterNot { externalCallResult =>
-      val coveredIndex = coveredBySubviews.indexWhere(externalCallResult.isCoveredBy)
-      if (coveredIndex >= 0) {
-        val _ = coveredBySubviews.remove(coveredIndex)
-        true
-      } else false
-    }
-
-    ImmArray.from(retained)
-  }
 
   private[submission] def originalRootNodeIdsForReconstruction(
       transaction: LfVersionedTransaction,

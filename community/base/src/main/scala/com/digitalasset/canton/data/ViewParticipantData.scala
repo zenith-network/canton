@@ -677,12 +677,6 @@ object ViewParticipantData
     private[data] def semanticIdentity: (String, String, Bytes, Bytes) =
       (result.extensionId, result.functionId, result.config, result.input)
 
-    private[data] def exactResult: (String, String, Bytes, Bytes, Bytes) =
-      (result.extensionId, result.functionId, result.config, result.input, result.output)
-
-    private[canton] def isCoveredBy(other: ViewExternalCallResult): Boolean =
-      exactResult == other.exactResult && checkingParties.subsetOf(other.checkingParties)
-
     private[ViewParticipantData] def toProtoV32: v32.ViewExternalCallResult =
       v32.ViewExternalCallResult(
         extensionId = result.extensionId,

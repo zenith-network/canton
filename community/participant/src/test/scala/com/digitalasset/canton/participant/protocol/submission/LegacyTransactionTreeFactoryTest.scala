@@ -75,6 +75,33 @@ final class LegacyTransactionTreeFactoryTest
     )
 
   private def withExternalCallResults(
+      example: ExampleTransaction,
+      resultsByNode: Map[LfNodeId, ImmArray[ExternalCallResult]],
+  ): WellFormedTransaction[WithoutSuffixes] = {
+    val updatedNodes =
+      resultsByNode.foldLeft(example.versionedUnsuffixedTransaction.nodes) {
+        case (nodes, (nodeId, results)) =>
+          val exercise = nodes(nodeId).asInstanceOf[LfNodeExercises]
+          nodes.updated(
+            nodeId,
+            exercise.copy(
+              externalCallResults = results,
+              version = LfSerializationVersion.VDev,
+            ),
+          )
+      }
+    val updatedTransaction = CantonOnly.lfVersionedTransaction(
+      nodes = updatedNodes,
+      roots = example.versionedUnsuffixedTransaction.roots,
+    )
+    WellFormedTransaction.checkOrThrow(
+      updatedTransaction,
+      example.metadata,
+      WithoutSuffixes,
+    )
+  }
+
+  private def withExternalCallResults(
       transaction: LfVersionedTransaction,
       metadata: TransactionMetadata,
       nodeId: LfNodeId,
@@ -225,6 +252,56 @@ final class LegacyTransactionTreeFactoryTest
               record.nodeId shouldBe LfNodeId(0)
               record.callIndex shouldBe 0
               record.checkingParties shouldBe Set(ExampleTransactionFactory.signatory)
+            }
+          }
+
+          "preserve distinct same-result external call occurrences across parent and child views" in {
+            val devFactory = new ExampleTransactionFactory(
+              versionOverride = Some(ProtocolVersion.dev)
+            )(
+              psid = factory.psid.copy(protocolVersion = ProtocolVersion.dev),
+              cantonContractIdVersion = contractIdVersion,
+            )
+            val treeFactory = createTransactionTreeFactory(devFactory)
+            val example = devFactory.TransientContracts
+            val childExternalCallNodeId = LfNodeId(3)
+            val parentExternalCallNodeId = LfNodeId(5)
+
+            createTransactionTree(
+              treeFactory,
+              withExternalCallResults(
+                example,
+                Map(
+                  childExternalCallNodeId -> ImmArray(externalCallResult),
+                  parentExternalCallNodeId -> ImmArray(externalCallResult),
+                ),
+              ),
+              successfulLookup(example),
+              example.keyResolver.asCidOptionMap,
+              snapshot = devFactory.topologySnapshot,
+              exampleFactory = devFactory,
+            ).value.map { result =>
+              val tree = result.value
+              tree.rootViews.unblindedElements should have size 2
+              val parentView = tree.rootViews.unblindedElements.drop(1).headOption.value
+              val childView = parentView.subviews.unblindedElements.loneElement
+
+              val parentRecord =
+                parentView.viewParticipantData.tryUnwrap.externalCallResults.toSeq.loneElement
+              parentRecord.result shouldBe externalCallResult
+              parentRecord.nodeId shouldBe LfNodeId(4)
+              parentRecord.callIndex shouldBe 0
+              parentRecord.checkingParties shouldBe Set(ExampleTransactionFactory.submitter)
+
+              val childRecord =
+                childView.viewParticipantData.tryUnwrap.externalCallResults.toSeq.loneElement
+              childRecord.result shouldBe externalCallResult
+              childRecord.nodeId shouldBe LfNodeId(0)
+              childRecord.callIndex shouldBe 0
+              childRecord.checkingParties shouldBe Set(
+                ExampleTransactionFactory.submitter,
+                ExampleTransactionFactory.signatory,
+              )
             }
           }
 
