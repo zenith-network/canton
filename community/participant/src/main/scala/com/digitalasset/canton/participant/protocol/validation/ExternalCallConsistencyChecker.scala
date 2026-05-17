@@ -58,9 +58,7 @@ object ExternalCallConsistencyChecker {
         s"(config bytes: ${bytesSize(key.config)}, input bytes: ${bytesSize(key.input)}, " +
         s"output byte sizes: ${outputs.toSeq.map(bytesSize).sorted.mkString("[", ", ", "]")}, " +
         s"occurrences: ${occurrences.toSeq
-            .sortBy(occurrence =>
-              (occurrence.viewPosition.position.toString, occurrence.nodeId.index, occurrence.callIndex)
-            )
+            .sortBy(occurrence => (occurrence.viewPosition.position.toString, occurrence.nodeId.index, occurrence.callIndex))
             .map(_.description)
             .mkString("[", "; ", "]")})"
 
@@ -92,19 +90,30 @@ final class ExternalCallConsistencyChecker {
   ): Result =
     if (hostedConfirmingParties.isEmpty) Result.empty
     else {
-      val outputsByPartyAndKey =
-        mutable.LinkedHashMap.empty[
-          LfPartyId,
-          mutable.Map[ExternalCallKey, mutable.Map[Bytes, mutable.Set[ExternalCallOccurrence]]],
-        ]
+      val externalCallViewResults =
+        viewValidationResults.iterator
+          .flatMap { case (viewPosition, viewValidationResult) =>
+            val viewParticipantData = viewValidationResult.view.viewParticipantData
+            if (
+              viewParticipantData.representativeProtocolVersion.representative.isDev &&
+              viewParticipantData.externalCallResults.nonEmpty
+            )
+              Iterator.single(viewPosition -> viewParticipantData.externalCallResults)
+            else Iterator.empty
+          }
+          .toSeq
+          .sortBy(_._1)(ViewPosition.orderViewPosition.toOrdering)
 
-      val orderedViewValidationResults =
-        viewValidationResults.toSeq.sortBy(_._1)(ViewPosition.orderViewPosition.toOrdering)
+      if (externalCallViewResults.isEmpty) Result.empty
+      else {
+        val outputsByPartyAndKey =
+          mutable.LinkedHashMap.empty[
+            LfPartyId,
+            mutable.Map[ExternalCallKey, mutable.Map[Bytes, mutable.Set[ExternalCallOccurrence]]],
+          ]
 
-      orderedViewValidationResults.foreach { case (viewPosition, viewValidationResult) =>
-        val viewParticipantData = viewValidationResult.view.viewParticipantData
-        if (viewParticipantData.representativeProtocolVersion.representative.isDev) {
-          viewParticipantData.externalCallResults.foreach { externalCallResult =>
+        externalCallViewResults.foreach { case (viewPosition, externalCallResults) =>
+          externalCallResults.foreach { externalCallResult =>
             val affectedHostedParties =
               externalCallResult.checkingParties.intersect(hostedConfirmingParties)
             if (affectedHostedParties.nonEmpty) {
@@ -128,10 +137,8 @@ final class ExternalCallConsistencyChecker {
             }
           }
         }
-      }
 
-      val inconsistencies = outputsByPartyAndKey.iterator.flatMap {
-        case (party, outputsByKey) =>
+        val inconsistencies = outputsByPartyAndKey.iterator.flatMap { case (party, outputsByKey) =>
           outputsByKey.iterator.collectFirst {
             case (key, occurrencesByOutput) if occurrencesByOutput.sizeCompare(1) > 0 =>
               party -> Inconsistency(
@@ -140,8 +147,9 @@ final class ExternalCallConsistencyChecker {
                 occurrencesByOutput.valuesIterator.flatMap(_.iterator).toSet,
               )
           }
-      }.toMap
+        }.toMap
 
-      Result(inconsistencies)
+        Result(inconsistencies)
+      }
     }
 }
