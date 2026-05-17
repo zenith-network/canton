@@ -342,6 +342,7 @@ class LegacyTransactionTreeFactory(
       List.newBuilder[(LfNodeCreate, RollbackScope)] // contract IDs have already been suffixed
     val coreOtherBuilder = // contract IDs have not yet been suffixed
       List.newBuilder[((LfNodeId, LfActionNode), RollbackScope)]
+    val coreExternalCallResultsBuilder = List.newBuilder[CoreExternalCallResult]
     val childViewsBuilder = Seq.newBuilder[TransactionView]
     val subViewKeyResolutions =
       mutable.Map.empty[LfGlobalKey, LfVersioned[SerializableKeyResolution]]
@@ -414,6 +415,7 @@ class LegacyTransactionTreeFactory(
               case lfNode: LfActionNode =>
                 val suffixedNode = trySuffixNode(state)(nodeId -> lfNode)
                 coreOtherBuilder += ((nodeId, lfNode) -> rbScope)
+                coreExternalCallResultsBuilder ++= externalCallResultsFromCoreNode(nodeId, lfNode)
                 EitherT.pure[FutureUnlessShutdown, TransactionTreeConversionError](suffixedNode)
             }
 
@@ -454,6 +456,7 @@ class LegacyTransactionTreeFactory(
         val (nodeId, _) = nodeInfo
         (nodeId, checked(trySuffixNode(state)(nodeInfo)), rbc)
       }
+      coreExternalCallResults = coreExternalCallResultsBuilder.result()
       childViews = childViewsBuilder.result()
 
       suffixedRootNode = coreOtherNodes.headOption
@@ -489,6 +492,7 @@ class LegacyTransactionTreeFactory(
         viewParticipantDataSalt,
         contractOfId,
         view.rbContext,
+        coreExternalCallResults,
         normalizeNodeIds,
       )
 
@@ -765,6 +769,7 @@ class LegacyTransactionTreeFactory(
       salt: Salt,
       contractOfId: ContractInstanceOfId,
       rbContextCore: RollbackContext,
+      coreExternalCallResults: List[CoreExternalCallResult],
       normalizeNodeIds: Set[LfNodeId] => Map[LfNodeId, LfNodeId],
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
 
@@ -835,10 +840,7 @@ class LegacyTransactionTreeFactory(
             rollbackContext = rbContextCore,
             salt = salt,
             protocolVersion = protocolVersion,
-            externalCallResults = externalCallResultsFromCoreNodes(
-              coreOtherNodes,
-              normalizeNodeIds,
-            ),
+            externalCallResults = viewExternalCallResults(coreExternalCallResults, normalizeNodeIds),
           )
         )
         .leftMap[TransactionTreeConversionError](ViewParticipantDataError.apply)

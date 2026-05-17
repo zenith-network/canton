@@ -307,6 +307,7 @@ class NextGenTransactionTreeFactory(
 
     // contract IDs have not yet been suffixed
     val coreOtherBuilder = List.newBuilder[((LfNodeId, LfActionNode), RollbackScope)]
+    val coreExternalCallResultsBuilder = List.newBuilder[CoreExternalCallResult]
 
     val childViewsBuilder = Seq.newBuilder[TransactionView]
 
@@ -396,6 +397,7 @@ class NextGenTransactionTreeFactory(
               case lfNode: LfActionNode =>
                 val suffixedNode = trySuffixNode(state)(nodeId -> lfNode)
                 coreOtherBuilder += ((nodeId, lfNode) -> rbScope)
+                coreExternalCallResultsBuilder ++= externalCallResultsFromCoreNode(nodeId, lfNode)
                 EitherT.pure[FutureUnlessShutdown, TransactionTreeConversionError](suffixedNode)
             }
 
@@ -423,6 +425,7 @@ class NextGenTransactionTreeFactory(
         val (nodeId, _) = nodeInfo
         (nodeId, checked(trySuffixNode(state)(nodeInfo)), rbc)
       }
+      coreExternalCallResults = coreExternalCallResultsBuilder.result()
       childViews = childViewsBuilder.result()
 
       suffixedRootNode: LfActionNode = coreOtherNodes.headOption
@@ -455,6 +458,7 @@ class NextGenTransactionTreeFactory(
         viewParticipantDataSalt,
         contractOfId,
         view.rbContext,
+        coreExternalCallResults,
         normalizeNodeIds,
       )
 
@@ -638,6 +642,7 @@ class NextGenTransactionTreeFactory(
       salt: Salt,
       contractOfId: ContractInstanceOfId,
       rbContextCore: RollbackContext,
+      coreExternalCallResults: List[CoreExternalCallResult],
       normalizeNodeIds: Set[LfNodeId] => Map[LfNodeId, LfNodeId],
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
 
@@ -702,10 +707,7 @@ class NextGenTransactionTreeFactory(
             rollbackContext = rbContextCore,
             salt = salt,
             protocolVersion = protocolVersion,
-            externalCallResults = externalCallResultsFromCoreNodes(
-              coreOtherNodes,
-              normalizeNodeIds,
-            ),
+            externalCallResults = viewExternalCallResults(coreExternalCallResults, normalizeNodeIds),
           )
         )
         .leftMap[TransactionTreeConversionError](ViewParticipantDataError.apply)

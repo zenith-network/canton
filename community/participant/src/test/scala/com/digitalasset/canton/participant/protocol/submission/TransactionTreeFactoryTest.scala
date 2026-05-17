@@ -4,7 +4,7 @@
 package com.digitalasset.canton.participant.protocol.submission
 
 import com.digitalasset.canton.BaseTest
-import com.digitalasset.canton.protocol.{ExampleTransactionFactory, LfNodeId, RollbackContext}
+import com.digitalasset.canton.protocol.{ExampleTransactionFactory, LfNodeId}
 import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
 import com.digitalasset.daml.lf.transaction.ExternalCallResult
 import org.scalatest.wordspec.AnyWordSpec
@@ -19,15 +19,18 @@ final class TransactionTreeFactoryTest extends AnyWordSpec with BaseTest {
     output = Bytes.fromStringUtf8("output"),
   )
 
-  "externalCallResultsFromCoreNodes" should {
+  "external call results from core nodes" should {
     "return empty results when core nodes contain no external call results" in {
       val exercise = ExampleTransactionFactory.exerciseNode(
         targetCoid = ExampleTransactionFactory.suffixedId(-1, 0),
         signatories = Set(ExampleTransactionFactory.signatory),
       )
 
-      TransactionTreeFactory.externalCallResultsFromCoreNodes(
-        coreOtherNodes = List((LfNodeId(0), exercise, RollbackContext.empty.rollbackScope)),
+      val coreResults =
+        TransactionTreeFactory.externalCallResultsFromCoreNode(LfNodeId(0), exercise).toList
+
+      TransactionTreeFactory.viewExternalCallResults(
+        coreExternalCallResults = coreResults,
         normalizeNodeIds = _ => fail("node id normalization should not be requested"),
       ) shouldBe ImmArray.Empty
     }
@@ -46,8 +49,11 @@ final class TransactionTreeFactoryTest extends AnyWordSpec with BaseTest {
         )
       var normalizationRequests = List.empty[Set[LfNodeId]]
 
-      val results = TransactionTreeFactory.externalCallResultsFromCoreNodes(
-        coreOtherNodes = List((LfNodeId(3), exercise, RollbackContext.empty.rollbackScope)),
+      val coreResults =
+        TransactionTreeFactory.externalCallResultsFromCoreNode(LfNodeId(3), exercise).toList
+
+      val results = TransactionTreeFactory.viewExternalCallResults(
+        coreExternalCallResults = coreResults,
         normalizeNodeIds = nodeIds => {
           normalizationRequests = normalizationRequests :+ nodeIds
           nodeIds.map(_ -> LfNodeId(1)).toMap
@@ -67,8 +73,11 @@ final class TransactionTreeFactoryTest extends AnyWordSpec with BaseTest {
         )
         .copy(externalCallResults = ImmArray(externalCallResult))
 
-      val results = TransactionTreeFactory.externalCallResultsFromCoreNodes(
-        coreOtherNodes = List((LfNodeId(3), exercise, RollbackContext.empty.rollbackScope)),
+      val coreResults =
+        TransactionTreeFactory.externalCallResultsFromCoreNode(LfNodeId(3), exercise).toList
+
+      val results = TransactionTreeFactory.viewExternalCallResults(
+        coreExternalCallResults = coreResults,
         normalizeNodeIds = nodeIds => nodeIds.map(_ -> LfNodeId(1)).toMap,
       )
 

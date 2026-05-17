@@ -39,11 +39,17 @@ final class TransactionConfirmationResponsesFactoryTest
     new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.dev))()
   private val synchronizerId = factory.psid.copy(protocolVersion = ProtocolVersion.dev)
   private val sut =
-    new TransactionConfirmationResponsesFactory(submittingParticipant, synchronizerId, loggerFactory)
+    new TransactionConfirmationResponsesFactory(
+      submittingParticipant,
+      synchronizerId,
+      loggerFactory,
+    )
 
   private val leftViewPosition = ViewPosition.root
   private val rightViewPosition =
-    ViewPosition(List(ViewPosition.MerkleSeqIndex(List(ViewPosition.MerkleSeqIndex.Direction.Right))))
+    ViewPosition(
+      List(ViewPosition.MerkleSeqIndex(List(ViewPosition.MerkleSeqIndex.Direction.Right)))
+    )
 
   private val externalCallResult = ExternalCallResult(
     extensionId = "extension",
@@ -127,13 +133,12 @@ final class TransactionConfirmationResponsesFactoryTest
       contractConsistencyResultE = Right(()),
       authenticationResult = Map.empty,
       authorizationResult = authorizationResult,
-      modelConformanceResultET =
-        EitherT.rightT[
-          FutureUnlessShutdown,
-          ModelConformanceChecker.ErrorWithSubTransaction[ViewAbsoluteLedgerEffect],
-        ](modelConformanceResult),
-      internalConsistencyResultET =
-        EitherT.rightT[FutureUnlessShutdown, InternalConsistencyChecker.ErrorWithInternalConsistencyCheck](
+      modelConformanceResultET = EitherT.rightT[
+        FutureUnlessShutdown,
+        ModelConformanceChecker.ErrorWithSubTransaction[ViewAbsoluteLedgerEffect],
+      ](modelConformanceResult),
+      internalConsistencyResultET = EitherT
+        .rightT[FutureUnlessShutdown, InternalConsistencyChecker.ErrorWithInternalConsistencyCheck](
           ()
         ),
       consumedInputsOfHostedParties = Map.empty,

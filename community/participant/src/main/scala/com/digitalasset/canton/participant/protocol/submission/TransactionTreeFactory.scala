@@ -162,25 +162,29 @@ object TransactionTreeFactory {
       result
     }
 
-  private final case class CoreExternalCallResult(
+  private[submission] final case class CoreExternalCallResult(
       nodeId: LfNodeId,
       exercise: LfNodeExercises,
       result: ExternalCallResult,
       callIndex: Int,
   )
 
-  private[submission] def externalCallResultsFromCoreNodes(
-      coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackContext.RollbackScope)],
-      normalizeNodeIds: Set[LfNodeId] => Map[LfNodeId, LfNodeId],
-  ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
-    val coreExternalCallResults = coreOtherNodes.flatMap {
-      case (nodeId, exercise: LfNodeExercises, _) =>
+  private[submission] def externalCallResultsFromCoreNode(
+      nodeId: LfNodeId,
+      node: LfActionNode,
+  ): Seq[CoreExternalCallResult] =
+    node match {
+      case exercise: LfNodeExercises if exercise.externalCallResults.nonEmpty =>
         exercise.externalCallResults.toSeq.zipWithIndex.map { case (result, callIndex) =>
           CoreExternalCallResult(nodeId, exercise, result, callIndex)
         }
       case _ => Seq.empty
     }
 
+  private[submission] def viewExternalCallResults(
+      coreExternalCallResults: List[CoreExternalCallResult],
+      normalizeNodeIds: Set[LfNodeId] => Map[LfNodeId, LfNodeId],
+  ): ImmArray[ViewParticipantData.ViewExternalCallResult] =
     if (coreExternalCallResults.isEmpty) ImmArray.Empty
     else {
       val normalizedNodeIds = normalizeNodeIds(coreExternalCallResults.map(_.nodeId).toSet)
@@ -200,7 +204,6 @@ object TransactionTreeFactory {
         }
       )
     }
-  }
 
   private[submission] def submittingAdminPartyForReconstruction(
       submittingParticipantO: Option[ParticipantId],
