@@ -202,12 +202,6 @@ object TransactionTreeFactory {
     }
   }
 
-  private[submission] def originalRootNodeIdsForReconstruction(
-      transaction: LfVersionedTransaction,
-      rootPosition: ViewPosition,
-  ): Set[LfNodeId] =
-    if (rootPosition.reverse.isTopLevel) transaction.roots.toSeq.toSet else Set.empty
-
   private[submission] def submittingAdminPartyForReconstruction(
       submittingParticipantO: Option[ParticipantId],
       rootPosition: ViewPosition,

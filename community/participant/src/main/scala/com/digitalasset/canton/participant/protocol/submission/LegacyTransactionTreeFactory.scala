@@ -184,7 +184,6 @@ class LegacyTransactionTreeFactory(
         contractOfId,
         topologySnapshot,
         transaction.unwrap,
-        transaction.unwrap.roots.toSeq.toSet,
         Some(submittingAdminParty),
       )
 
@@ -263,7 +262,6 @@ class LegacyTransactionTreeFactory(
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
       sourceTransaction: LfVersionedTransaction,
-      originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   )(implicit
       traceContext: TraceContext
@@ -314,7 +312,6 @@ class LegacyTransactionTreeFactory(
             fromPreloaded,
             topologySnapshot,
             sourceTransaction,
-            originalRootNodeIds,
             submittingAdminPartyO,
           )
         }
@@ -328,7 +325,6 @@ class LegacyTransactionTreeFactory(
       contractOfId: ContractInstanceOfId,
       topologySnapshot: TopologySnapshot,
       sourceTransaction: LfVersionedTransaction,
-      originalRootNodeIds: Set[LfNodeId],
       submittingAdminPartyO: Option[LfPartyId],
   )(implicit
       traceContext: TraceContext
@@ -381,7 +377,6 @@ class LegacyTransactionTreeFactory(
             contractOfId,
             topologySnapshot,
             sourceTransaction,
-            originalRootNodeIds,
             submittingAdminPartyO,
           )
             .map { v =>
@@ -939,7 +934,6 @@ class LegacyTransactionTreeFactory(
         contractOfId,
         topologySnapshot,
         transaction.unwrap,
-        originalRootNodeIdsForReconstruction(transaction.unwrap, rootPosition),
         submittingAdminPartyO,
       )
       suffixedNodes = state.suffixedNodes() transform {
