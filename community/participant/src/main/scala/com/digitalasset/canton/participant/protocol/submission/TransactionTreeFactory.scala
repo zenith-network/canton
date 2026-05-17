@@ -32,7 +32,7 @@ import com.digitalasset.canton.sequencing.protocol.MediatorGroupRecipient
 import com.digitalasset.canton.topology.client.TopologySnapshot
 import com.digitalasset.canton.topology.{ParticipantId, PhysicalSynchronizerId}
 import com.digitalasset.canton.tracing.TraceContext
-import com.digitalasset.canton.util.{ContractHasher, LfTransactionUtil}
+import com.digitalasset.canton.util.ContractHasher
 import com.digitalasset.canton.version.ProtocolVersion
 import com.digitalasset.daml.lf.data.ImmArray
 import com.digitalasset.daml.lf.transaction.{ExternalCallResult, LegacyTransactionErrors}
@@ -172,8 +172,6 @@ object TransactionTreeFactory {
   private[submission] def externalCallResultsFromCoreNodes(
       coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackContext.RollbackScope)],
       normalizeNodeIds: Set[LfNodeId] => Map[LfNodeId, LfNodeId],
-      originalRootNodeIds: Set[LfNodeId],
-      submittingAdminPartyO: Option[LfPartyId],
   ): ImmArray[ViewParticipantData.ViewExternalCallResult] = {
     val coreExternalCallResults = coreOtherNodes.flatMap {
       case (nodeId, exercise: LfNodeExercises, _) =>
@@ -197,30 +195,12 @@ object TransactionTreeFactory {
               ),
             ),
             callIndex = externalCall.callIndex,
-            checkingParties = checkingPartiesForNode(
-              externalCall.nodeId,
-              externalCall.exercise,
-              originalRootNodeIds,
-              submittingAdminPartyO,
-            ),
+            checkingParties = externalCall.exercise.signatories,
           )
         }
       )
     }
   }
-
-  private def checkingPartiesForNode(
-      nodeId: LfNodeId,
-      node: LfActionNode,
-      originalRootNodeIds: Set[LfNodeId],
-      submittingAdminPartyO: Option[LfPartyId],
-  ): Set[LfPartyId] =
-    Option
-      .when(originalRootNodeIds.contains(nodeId))(submittingAdminPartyO)
-      .flatten
-      .fold[Set[LfPartyId]](Set.empty)(party => Set(party)) |
-      LfTransactionUtil.signatoriesOrMaintainers(node) |
-      LfTransactionUtil.actingParties(node)
 
   private[submission] def originalRootNodeIdsForReconstruction(
       transaction: LfVersionedTransaction,

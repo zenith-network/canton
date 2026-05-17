@@ -461,8 +461,6 @@ class NextGenTransactionTreeFactory(
         contractOfId,
         view.rbContext,
         normalizeNodeIds,
-        originalRootNodeIds,
-        submittingAdminPartyO,
       )
 
     } yield {
@@ -646,8 +644,6 @@ class NextGenTransactionTreeFactory(
       contractOfId: ContractInstanceOfId,
       rbContextCore: RollbackContext,
       normalizeNodeIds: Set[LfNodeId] => Map[LfNodeId, LfNodeId],
-      originalRootNodeIds: Set[LfNodeId],
-      submittingAdminPartyO: Option[LfPartyId],
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
 
     val consumedInCore =
@@ -714,8 +710,6 @@ class NextGenTransactionTreeFactory(
             externalCallResults = externalCallResultsFromCoreNodes(
               coreOtherNodes,
               normalizeNodeIds,
-              originalRootNodeIds,
-              submittingAdminPartyO,
             ),
           )
         )

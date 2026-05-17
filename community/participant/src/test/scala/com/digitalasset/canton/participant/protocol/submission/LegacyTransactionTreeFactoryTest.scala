@@ -213,10 +213,7 @@ final class LegacyTransactionTreeFactoryTest
               record.result shouldBe externalCallResult
               record.nodeId shouldBe LfNodeId(4)
               record.callIndex shouldBe 0
-              record.checkingParties shouldBe Set(
-                ExampleTransactionFactory.submitter,
-                ExampleTransactionFactory.signatory,
-              )
+              record.checkingParties shouldBe Set(ExampleTransactionFactory.signatory)
             }
           }
 
@@ -305,7 +302,7 @@ final class LegacyTransactionTreeFactoryTest
             }
           }
 
-          "reconstruct root external call records with the submitting participant admin party" in {
+          "reconstruct root external call records with the exercise signatory" in {
             val devFactory = new ExampleTransactionFactory(
               versionOverride = Some(ProtocolVersion.dev)
             )(

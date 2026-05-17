@@ -29,8 +29,6 @@ final class TransactionTreeFactoryTest extends AnyWordSpec with BaseTest {
       TransactionTreeFactory.externalCallResultsFromCoreNodes(
         coreOtherNodes = List((LfNodeId(0), exercise, RollbackContext.empty.rollbackScope)),
         normalizeNodeIds = _ => fail("node id normalization should not be requested"),
-        originalRootNodeIds = Set.empty,
-        submittingAdminPartyO = None,
       ) shouldBe ImmArray.Empty
     }
 
@@ -54,12 +52,27 @@ final class TransactionTreeFactoryTest extends AnyWordSpec with BaseTest {
           normalizationRequests = normalizationRequests :+ nodeIds
           nodeIds.map(_ -> LfNodeId(1)).toMap
         },
-        originalRootNodeIds = Set.empty,
-        submittingAdminPartyO = None,
       )
 
       normalizationRequests shouldBe List(Set(LfNodeId(3)))
       results.toSeq.map(_.nodeId) shouldBe Seq(LfNodeId(1), LfNodeId(1))
+    }
+
+    "use only exercise signatories as checking parties" in {
+      val exercise = ExampleTransactionFactory
+        .exerciseNode(
+          targetCoid = ExampleTransactionFactory.suffixedId(-1, 0),
+          signatories = Set(ExampleTransactionFactory.signatory),
+          actingParties = Set(ExampleTransactionFactory.submitter),
+        )
+        .copy(externalCallResults = ImmArray(externalCallResult))
+
+      val results = TransactionTreeFactory.externalCallResultsFromCoreNodes(
+        coreOtherNodes = List((LfNodeId(3), exercise, RollbackContext.empty.rollbackScope)),
+        normalizeNodeIds = nodeIds => nodeIds.map(_ -> LfNodeId(1)).toMap,
+      )
+
+      results.toSeq.loneElement.checkingParties shouldBe Set(ExampleTransactionFactory.signatory)
     }
   }
 }

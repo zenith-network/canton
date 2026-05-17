@@ -495,8 +495,6 @@ class LegacyTransactionTreeFactory(
         contractOfId,
         view.rbContext,
         normalizeNodeIds,
-        originalRootNodeIds,
-        submittingAdminPartyO,
       )
 
       // fast-forward the former state over the subtree
@@ -773,8 +771,6 @@ class LegacyTransactionTreeFactory(
       contractOfId: ContractInstanceOfId,
       rbContextCore: RollbackContext,
       normalizeNodeIds: Set[LfNodeId] => Map[LfNodeId, LfNodeId],
-      originalRootNodeIds: Set[LfNodeId],
-      submittingAdminPartyO: Option[LfPartyId],
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
 
     val consumedInCore =
@@ -847,8 +843,6 @@ class LegacyTransactionTreeFactory(
             externalCallResults = externalCallResultsFromCoreNodes(
               coreOtherNodes,
               normalizeNodeIds,
-              originalRootNodeIds,
-              submittingAdminPartyO,
             ),
           )
         )
