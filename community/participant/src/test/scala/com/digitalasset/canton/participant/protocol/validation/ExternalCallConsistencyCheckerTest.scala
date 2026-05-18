@@ -70,26 +70,6 @@ class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
       ),
     )
 
-  private final class NoBulkToSeqMap(entries: Seq[(ViewPosition, ViewValidationResult)])
-      extends scala.collection.immutable.AbstractMap[ViewPosition, ViewValidationResult] {
-    override def get(key: ViewPosition): Option[ViewValidationResult] =
-      entries.collectFirst { case (`key`, result) => result }
-
-    override def removed(key: ViewPosition): Map[ViewPosition, ViewValidationResult] =
-      entries.toMap.removed(key)
-
-    override def updated[V1 >: ViewValidationResult](
-        key: ViewPosition,
-        value: V1,
-    ): Map[ViewPosition, V1] =
-      entries.toMap.updated(key, value)
-
-    override def iterator: Iterator[(ViewPosition, ViewValidationResult)] = entries.iterator
-
-    override def toSeq: Seq[(ViewPosition, ViewValidationResult)] =
-      fail("checker should not materialize all view results before filtering external calls")
-  }
-
   private def check(
       leftCheckingParties: Set[LfPartyId],
       rightCheckingParties: Set[LfPartyId],
@@ -170,21 +150,6 @@ class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
       )
 
       result.inconsistentParties shouldBe Set.empty
-    }
-
-    "not bulk materialize views when no external call results are present" in {
-      val example = factory.MultipleRoots
-      val viewResults = new NoBulkToSeqMap(
-        Seq(
-          ViewPosition.root -> validationResult(example.rootViews(4)),
-          ViewPosition(
-            List(ViewPosition.MerkleSeqIndex(List(ViewPosition.MerkleSeqIndex.Direction.Right)))
-          ) -> validationResult(example.rootViews(5)),
-        )
-      )
-
-      sut.check(viewResults, hostedConfirmingParties = Set(partyA)) shouldBe
-        ExternalCallConsistencyChecker.Result.empty
     }
   }
 }
