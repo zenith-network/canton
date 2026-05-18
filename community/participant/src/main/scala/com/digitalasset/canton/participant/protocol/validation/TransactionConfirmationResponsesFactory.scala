@@ -314,8 +314,10 @@ class TransactionConfirmationResponsesFactory(
                   generalResponse(hostedConfirmingParties).toList
                 case None =>
                   val externalCallInconsistencies =
-                    externalCallConsistencyResult.value.inconsistencies.filter { case (party, _) =>
-                      hostedConfirmingParties(party)
+                    externalCallConsistencyResult.value.inconsistencies.filter {
+                      case (party, inconsistency) =>
+                        hostedConfirmingParties(party) &&
+                        inconsistency.occurrences.exists(_.viewPosition == viewPosition)
                     }
                   val inconsistentParties = externalCallInconsistencies.keySet
 

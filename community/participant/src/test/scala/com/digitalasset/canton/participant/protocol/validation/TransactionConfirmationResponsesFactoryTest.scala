@@ -57,6 +57,10 @@ final class TransactionConfirmationResponsesFactoryTest
     ViewPosition(
       List(ViewPosition.MerkleSeqIndex(List(ViewPosition.MerkleSeqIndex.Direction.Right)))
     )
+  private val unrelatedViewPosition =
+    ViewPosition(
+      List(ViewPosition.MerkleSeqIndex(List(ViewPosition.MerkleSeqIndex.Direction.Left)))
+    )
 
   private val externalCallResult = ExternalCallResult(
     extensionId = "extension",
@@ -333,6 +337,25 @@ final class TransactionConfirmationResponsesFactoryTest
       inside(leftResponses.find(_.confirmingParties == Set(signatory)).value) {
         case ConfirmationResponse(_, LocalApprove(), _) =>
           succeed
+      }
+    }
+
+    "not attribute external-call disagreements to unrelated hosted views" in {
+      val example = factory.MultipleRoots
+      val confirmers = Set(submitter, signatory)
+      val unrelatedView = withConfirmers(example.rootViews(3), confirmers)
+      val responses =
+        createResponses(
+          transactionValidationResult(
+            conflictingExternalCallViews +
+              (unrelatedViewPosition -> validationResult(unrelatedView))
+          )
+        )
+
+      val unrelatedResponses = responses.filter(_.viewPositionO.contains(unrelatedViewPosition))
+      inside(unrelatedResponses.loneElement) {
+        case ConfirmationResponse(_, LocalApprove(), confirmingParties) =>
+          confirmingParties shouldBe confirmers
       }
     }
 
