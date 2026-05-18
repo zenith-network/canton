@@ -8,7 +8,6 @@ import com.digitalasset.canton.protocol.hash.HashTracer
 import com.digitalasset.canton.protocol.{LfHash, hash}
 import com.digitalasset.canton.version.HashingSchemeVersion
 import com.digitalasset.daml.lf.transaction.{
-  ExternalCallResult,
   GlobalKeyWithMaintainers,
   Node,
   NodeId,
@@ -20,7 +19,7 @@ import com.digitalasset.daml.lf.transaction.{
   * At the node level, V3 makes the following additions to the common builder:
   *   - Create: keyOpt
   *   - Fetch: keyOpt, byKey
-  *   - Exercise: keyOpt, byKey, externalCallResults
+  *   - Exercise: keyOpt, byKey
   *   - QueryByKey: new node This class extends NodeHashBuilderV3 and overrides relevant methods to
   *     add new node fields that mush be hashed in V3.
   */
@@ -55,14 +54,6 @@ private[hash] class NodeHashBuilder(
       .addStringSet(maintainers)
   }
 
-  private def addExternalCallResult(result: ExternalCallResult): this.type =
-    addContext("External Call Result")
-      .withContext("Extension Id")(_.addString(result.extensionId))
-      .withContext("Function Id")(_.addString(result.functionId))
-      .withContext("Config")(_.addByteString(result.config.toByteString))
-      .withContext("Input")(_.addByteString(result.input.toByteString))
-      .withContext("Output")(_.addByteString(result.output.toByteString))
-
   private val addQueryByKeyNode: Node.QueryByKey => this.type = {
     case Node.QueryByKey(packageName, templateId, exhaustive, key, result, version) =>
       addContext("QueryByKey Node")
@@ -89,7 +80,7 @@ private[hash] class NodeHashBuilder(
   override protected def addExerciseNodeNoChildren(
       nodeSeed: LfHash
   ): Node.Exercise => this.type = node => {
-    val builder = super
+    super
       .addExerciseNodeNoChildren(nodeSeed)(node)
       .withContext("By Key")(
         _.addBool(node.byKey)
@@ -97,14 +88,6 @@ private[hash] class NodeHashBuilder(
       .withContext("Key")(
         _.addOptional(node.keyOpt, _.addGlobalKeyWithMaintainers)
       )
-
-    if (node.externalCallResults.nonEmpty)
-      builder.withContext("External Call Results")(
-        _.addArray(node.externalCallResults)((builder, result) =>
-          builder.addExternalCallResult(result)
-        )
-      )
-    else builder
   }
 
   override def addFetchNode(node: Node.Fetch): this.type =

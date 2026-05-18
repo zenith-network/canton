@@ -5,10 +5,8 @@ package com.digitalasset.canton.protocol.hash.v3
 
 import com.digitalasset.canton.crypto.Hash
 import com.digitalasset.canton.protocol.LfHash
-import com.digitalasset.canton.protocol.hash.TransactionHash.NodeHashingError
 import com.digitalasset.canton.protocol.hash.{BaseNodeHashTest, HashTracer}
 import com.digitalasset.canton.version.HashingSchemeVersion
-import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
 import com.digitalasset.daml.lf.data.Ref.PackageName
 import com.digitalasset.daml.lf.transaction.*
 import com.digitalasset.daml.lf.value.Value.ContractId
@@ -426,52 +424,6 @@ class NodeHashTest extends BaseNodeHashTest {
           byKey = false
         )
       ) should !==(defaultExerciseHash)
-    }
-
-    "not produce collision in external call results" in {
-      val externalCallResult = ExternalCallResult(
-        extensionId = "ext",
-        functionId = "fun",
-        config = Bytes.assertFromString("0a0b"),
-        input = Bytes.assertFromString("c0ff"),
-        output = Bytes.assertFromString("beef"),
-      )
-
-      val exerciseNodeWithoutExternalCallResults =
-        exerciseNode.copy(version = SerializationVersion.VDev)
-      val exerciseNodeWithExternalCallResults =
-        exerciseNodeWithoutExternalCallResults.copy(
-          externalCallResults = ImmArray(externalCallResult)
-        )
-      val exerciseNodeWithOtherExternalCallOutput =
-        exerciseNodeWithoutExternalCallResults.copy(
-          externalCallResults = ImmArray(
-            externalCallResult.copy(output = Bytes.assertFromString("f00d"))
-          )
-        )
-
-      hashExerciseNode(exerciseNodeWithExternalCallResults) should !==(
-        hashExerciseNode(exerciseNodeWithoutExternalCallResults)
-      )
-      hashExerciseNode(exerciseNodeWithOtherExternalCallOutput) should !==(
-        hashExerciseNode(exerciseNodeWithExternalCallResults)
-      )
-    }
-
-    "reject external call results on non-dev exercise nodes" in {
-      val externalCallResult = ExternalCallResult(
-        extensionId = "ext",
-        functionId = "fun",
-        config = Bytes.assertFromString("0a0b"),
-        input = Bytes.assertFromString("c0ff"),
-        output = Bytes.assertFromString("beef"),
-      )
-
-      a[NodeHashingError.UnsupportedFeature] shouldBe thrownBy(
-        hashExerciseNode(
-          exerciseNode.copy(externalCallResults = ImmArray(externalCallResult))
-        )
-      )
     }
 
     "not produce collision in version" in {
