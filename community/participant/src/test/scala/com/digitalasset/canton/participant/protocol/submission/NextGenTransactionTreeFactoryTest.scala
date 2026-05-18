@@ -212,7 +212,10 @@ final class NextGenTransactionTreeFactoryTest
               record.result shouldBe externalCallResult
               record.nodeId shouldBe LfNodeId(4)
               record.callIndex shouldBe 0
-              record.checkingParties shouldBe Set(ExampleTransactionFactory.signatory)
+              record.checkingParties shouldBe Set(
+                ExampleTransactionFactory.signatory,
+                ExampleTransactionFactory.submitter,
+              )
             }
           }
 

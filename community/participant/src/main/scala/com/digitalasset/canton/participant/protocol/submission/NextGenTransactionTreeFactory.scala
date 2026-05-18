@@ -340,6 +340,7 @@ class NextGenTransactionTreeFactory(
       case _ => false
     }
     val subviewIndex = TransactionSubviews.indices(nbSubViews).iterator
+    val sourceRootNodeIds = sourceTransaction.roots.toSeq.toSet
     def normalizeNodeIds(nodeIds: Set[LfNodeId]): Map[LfNodeId, LfNodeId] =
       nodeIdNormalizationForView(
         sourceTransaction,
@@ -398,7 +399,13 @@ class NextGenTransactionTreeFactory(
               case lfNode: LfActionNode =>
                 val suffixedNode = trySuffixNode(state)(nodeId -> lfNode)
                 coreOtherBuilder += ((nodeId, lfNode) -> rbScope)
-                coreExternalCallResultsBuilder ++= externalCallResultsFromCoreNode(nodeId, lfNode)
+                val submittingAdminPartyForNodeO =
+                  if (sourceRootNodeIds(nodeId)) submittingAdminPartyO else None
+                coreExternalCallResultsBuilder ++= externalCallResultsFromCoreNode(
+                  nodeId,
+                  lfNode,
+                  submittingAdminPartyForNodeO,
+                )
                 EitherT.pure[FutureUnlessShutdown, TransactionTreeConversionError](suffixedNode)
             }
 
@@ -906,19 +913,24 @@ object NextGenTransactionTreeFactory {
 
   private[submission] final case class CoreExternalCallResult(
       nodeId: LfNodeId,
-      exercise: LfNodeExercises,
       result: ExternalCallResult,
       callIndex: Int,
+      checkingParties: Set[LfPartyId],
   )
 
   private[submission] def externalCallResultsFromCoreNode(
       nodeId: LfNodeId,
       node: LfActionNode,
+      submittingAdminPartyO: Option[LfPartyId],
   ): Seq[CoreExternalCallResult] =
     node match {
       case exercise: LfNodeExercises if exercise.externalCallResults.nonEmpty =>
+        val checkingParties =
+          submittingAdminPartyO.fold[Set[LfPartyId]](Set.empty)(Set(_)) |
+            LfTransactionUtil.signatoriesOrMaintainers(exercise) |
+            LfTransactionUtil.actingParties(exercise)
         exercise.externalCallResults.toSeq.zipWithIndex.map { case (result, callIndex) =>
-          CoreExternalCallResult(nodeId, exercise, result, callIndex)
+          CoreExternalCallResult(nodeId, result, callIndex, checkingParties)
         }
       case _ => Seq.empty
     }
@@ -941,7 +953,7 @@ object NextGenTransactionTreeFactory {
               ),
             ),
             callIndex = externalCall.callIndex,
-            checkingParties = externalCall.exercise.signatories,
+            checkingParties = externalCall.checkingParties,
           )
         }
       )
