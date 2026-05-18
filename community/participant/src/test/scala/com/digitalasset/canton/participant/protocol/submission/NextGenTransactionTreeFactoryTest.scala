@@ -105,8 +105,9 @@ final class NextGenTransactionTreeFactoryTest
       metadata: TransactionMetadata,
       nodeId: LfNodeId,
       results: ImmArray[ExternalCallResult],
+      updateExercise: LfNodeExercises => LfNodeExercises = identity,
   ): WellFormedTransaction[WithoutSuffixes] = {
-    val exercise = transaction.nodes(nodeId).asInstanceOf[LfNodeExercises]
+    val exercise = updateExercise(transaction.nodes(nodeId).asInstanceOf[LfNodeExercises])
     val updatedExercise = exercise.copy(
       externalCallResults = results,
       version = LfSerializationVersion.VDev,
@@ -346,7 +347,7 @@ final class NextGenTransactionTreeFactoryTest
             }
           }
 
-          "reconstruct root external call records with the exercise signatory" in {
+          "reconstruct root external call records with node-level parties and the submitting participant admin party" in {
             val devFactory = new ExampleTransactionFactory(
               versionOverride = Some(ProtocolVersion.dev)
             )(
@@ -358,9 +359,15 @@ final class NextGenTransactionTreeFactoryTest
               devFactory,
               ExampleTransactionFactory.observerParticipant,
             )
-            val example = devFactory.SingleExercise(devFactory.deriveNodeSeed(0))
-            val transaction =
-              withExternalCallResults(example, LfNodeId(0), ImmArray(externalCallResult))
+            val example =
+              devFactory.SingleExerciseWithNonstakeholderActor(devFactory.deriveNodeSeed(0))
+            val transaction = withExternalCallResults(
+              example.versionedUnsuffixedTransaction,
+              example.metadata,
+              LfNodeId(0),
+              ImmArray(externalCallResult),
+              _.copy(actingParties = Set(ExampleTransactionFactory.signatory)),
+            )
 
             createTransactionTree(
               submittingTreeFactory,
@@ -394,7 +401,10 @@ final class NextGenTransactionTreeFactoryTest
                   val record =
                     reconstructedView.viewParticipantData.tryUnwrap.externalCallResults.toSeq.loneElement
 
-                  record.checkingParties shouldBe Set(ExampleTransactionFactory.submitter)
+                  record.checkingParties shouldBe Set(
+                    ExampleTransactionFactory.signatory,
+                    ExampleTransactionFactory.submitter,
+                  )
                 }
             }
           }
