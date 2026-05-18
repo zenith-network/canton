@@ -45,11 +45,12 @@ class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
       nodeId: LfNodeId,
       result: ExternalCallResult,
       checkingParties: Set[LfPartyId],
+      callIndex: Int = 0,
   ): ViewParticipantData.ViewExternalCallResult =
     ViewParticipantData.ViewExternalCallResult(
       result = result,
       nodeId = nodeId,
-      callIndex = 0,
+      callIndex = callIndex,
       checkingParties = checkingParties,
     )
 
@@ -150,6 +151,50 @@ class ExternalCallConsistencyCheckerTest extends AnyWordSpec with BaseTest {
       )
 
       result.inconsistentParties shouldBe Set.empty
+    }
+
+    "not report different semantic calls with different outputs" in {
+      val result = check(
+        leftCheckingParties = Set(partyA),
+        rightCheckingParties = Set(partyA),
+        hostedParties = Set(partyA),
+        rightResult = otherExternalCallOutput.copy(functionId = "other-function"),
+      )
+
+      result.inconsistentParties shouldBe Set.empty
+    }
+
+    "report repeated semantic calls on the same node with different outputs" in {
+      val example = factory.MultipleRoots
+      val view = withExternalCallResults(
+        example.rootViews(4),
+        ImmArray(
+          externalCallViewResult(
+            nodeId = LfNodeId(0),
+            result = externalCallResult,
+            checkingParties = Set(partyA),
+            callIndex = 0,
+          ),
+          externalCallViewResult(
+            nodeId = LfNodeId(0),
+            result = otherExternalCallOutput,
+            checkingParties = Set(partyA),
+            callIndex = 1,
+          ),
+        ),
+      )
+
+      val result = sut.check(
+        Map(ViewPosition.root -> validationResult(view)),
+        Set(partyA),
+      )
+
+      result.inconsistentParties shouldBe Set(partyA)
+      val inconsistency = result.inconsistencies(partyA)
+      inconsistency.outputs shouldBe Set(externalCallResult.output, otherExternalCallOutput.output)
+      inconsistency.occurrences.map(occurrence =>
+        occurrence.nodeId -> occurrence.callIndex
+      ) shouldBe Set(LfNodeId(0) -> 0, LfNodeId(0) -> 1)
     }
   }
 }
