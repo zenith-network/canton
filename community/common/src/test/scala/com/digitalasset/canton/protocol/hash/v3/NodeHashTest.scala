@@ -428,7 +428,7 @@ class NodeHashTest extends BaseNodeHashTest {
       ) should !==(defaultExerciseHash)
     }
 
-    "not include external call results" in {
+    "not produce collision in external call results" in {
       val externalCallResult = ExternalCallResult(
         extensionId = "ext",
         functionId = "fun",
@@ -443,9 +443,18 @@ class NodeHashTest extends BaseNodeHashTest {
         exerciseNodeWithoutExternalCallResults.copy(
           externalCallResults = ImmArray(externalCallResult)
         )
+      val exerciseNodeWithOtherExternalCallOutput =
+        exerciseNodeWithoutExternalCallResults.copy(
+          externalCallResults = ImmArray(
+            externalCallResult.copy(output = Bytes.assertFromString("f00d"))
+          )
+        )
 
-      hashExerciseNode(exerciseNodeWithExternalCallResults) shouldBe hashExerciseNode(
-        exerciseNodeWithoutExternalCallResults
+      hashExerciseNode(exerciseNodeWithExternalCallResults) should !==(
+        hashExerciseNode(exerciseNodeWithoutExternalCallResults)
+      )
+      hashExerciseNode(exerciseNodeWithOtherExternalCallOutput) should !==(
+        hashExerciseNode(exerciseNodeWithExternalCallResults)
       )
     }
 
