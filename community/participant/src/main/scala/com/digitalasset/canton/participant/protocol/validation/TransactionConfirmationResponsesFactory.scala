@@ -283,6 +283,21 @@ class TransactionConfirmationResponsesFactory(
                   modelConformanceRejections ++ internalConsistencyRejections ++
                   replayRejections
 
+              def generalResponse(parties: Set[LfPartyId]): Option[ConfirmationResponse] =
+                Option.when(parties.nonEmpty) {
+                  val generalVerdict = localVerdicts
+                    .collectFirst { case localReject: LocalReject => localReject }
+                    .getOrElse(LocalApprove(protocolVersion))
+                  checked(
+                    ConfirmationResponse
+                      .tryCreate(
+                        Some(viewPosition),
+                        generalVerdict,
+                        parties,
+                      )
+                  )
+                }
+
               localVerdicts.collectFirst {
                 case malformed: LocalReject if malformed.isMalformed =>
                   checked(
@@ -295,6 +310,8 @@ class TransactionConfirmationResponsesFactory(
                   )
               } match {
                 case Some(malformedResponse) => Seq(malformedResponse)
+                case None if !hasHostedExternalCallResults =>
+                  generalResponse(hostedConfirmingParties).toList
                 case None =>
                   val externalCallInconsistencies =
                     externalCallConsistencyResult.value.inconsistencies.filter { case (party, _) =>
@@ -325,21 +342,8 @@ class TransactionConfirmationResponsesFactory(
                     }
 
                   val generalParties = hostedConfirmingParties -- inconsistentParties
-                  val generalResponse = Option.when(generalParties.nonEmpty) {
-                    val generalVerdict = localVerdicts
-                      .collectFirst { case localReject: LocalReject => localReject }
-                      .getOrElse(LocalApprove(protocolVersion))
-                    checked(
-                      ConfirmationResponse
-                        .tryCreate(
-                          Some(viewPosition),
-                          generalVerdict,
-                          generalParties,
-                        )
-                    )
-                  }
 
-                  externalCallResponses ++ generalResponse
+                  externalCallResponses ++ generalResponse(generalParties).toList
               }
             }
           }
