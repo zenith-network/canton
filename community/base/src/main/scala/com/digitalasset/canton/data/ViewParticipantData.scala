@@ -142,17 +142,18 @@ final case class ViewParticipantData private (
         s"External call results are supported only in protocol version ${ProtocolVersion.dev}"
       )
 
-    if (externalCallResults.nonEmpty)
+    if (externalCallResults.nonEmpty) {
       actionDescription match {
         case _: ExerciseActionDescription => ()
         case _ =>
           throw InvalidViewParticipantData("External call results require an exercise root action")
       }
 
-    val externalCallOccurrenceIds =
-      externalCallResults.toSeq.map(result => (result.nodeId, result.callIndex))
-    requireDistinct(externalCallOccurrenceIds) { case (nodeId, callIndex) =>
-      s"externalCallResults contains duplicate occurrence (node id ${nodeId.index}, call index $callIndex)"
+      val externalCallOccurrenceIds =
+        externalCallResults.toSeq.map(result => (result.nodeId, result.callIndex))
+      requireDistinct(externalCallOccurrenceIds) { case (nodeId, callIndex) =>
+        s"externalCallResults contains duplicate occurrence (node id ${nodeId.index}, call index $callIndex)"
+      }
     }
 
   }
