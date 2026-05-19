@@ -10,7 +10,7 @@ class LegacyInternalConsistencyCheckerTest extends InternalConsistencyCheckerTes
   "Internal consistency checker" when {
 
     val participantId: ParticipantId = ParticipantId("test")
-    val sut = new LegacyInternalConsistencyChecker(participantId, loggerFactory)
+    val sut = new NextGenInternalConsistencyChecker(participantId, loggerFactory)
 
     "rollback scope order" should checkRollbackScopeOrder()
 
