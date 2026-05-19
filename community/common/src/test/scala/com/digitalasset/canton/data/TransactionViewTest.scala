@@ -22,7 +22,6 @@ import com.digitalasset.canton.{
 }
 import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
 import com.digitalasset.daml.lf.transaction.ExternalCallResult
-import com.google.protobuf.{ByteString as ProtoByteString, CodedOutputStream}
 import org.scalatest.wordspec.AnyWordSpec
 
 import scala.collection.immutable.ListSet
@@ -71,25 +70,19 @@ class TransactionViewTest
     ViewParticipantData.ViewExternalCallResult(result, nodeId, callIndex, checkingParties)
 
   private def externalCallResultProto(
-      includeNodeId: Boolean = true,
-      includeCallIndex: Boolean = true,
-      nodeId: Int = 7,
-      callIndex: Int = 1,
-  ): v32.ViewExternalCallResult = {
-    val out = ProtoByteString.newOutput()
-    val output = CodedOutputStream.newInstance(out)
-    output.writeString(1, externalCallResult.extensionId)
-    output.writeString(2, externalCallResult.functionId)
-    output.writeBytes(3, externalCallResult.config.toByteString)
-    output.writeBytes(4, externalCallResult.input.toByteString)
-    output.writeBytes(5, externalCallResult.output.toByteString)
-    if (includeNodeId) output.writeInt32(6, nodeId)
-    if (includeCallIndex) output.writeInt32(7, callIndex)
-    externalCallCheckingParties.foreach(party => output.writeString(8, party))
-    output.flush()
-
-    v32.ViewExternalCallResult.parseFrom(out.toByteString.newCodedInput())
-  }
+      nodeId: Option[Int] = Some(7),
+      callIndex: Option[Int] = Some(1),
+  ): v32.ViewExternalCallResult =
+    v32.ViewExternalCallResult(
+      extensionId = externalCallResult.extensionId,
+      functionId = externalCallResult.functionId,
+      config = externalCallResult.config.toByteString,
+      input = externalCallResult.input.toByteString,
+      output = externalCallResult.output.toByteString,
+      nodeId = nodeId,
+      callIndex = callIndex,
+      checkingParties = externalCallCheckingParties.toSeq.sorted,
+    )
 
   private val defaultActionDescription: ActionDescription =
     ActionDescription.tryFromLfActionNode(
@@ -536,21 +529,21 @@ class TransactionViewTest
 
       "reject an external call result without node_id" in {
         ViewParticipantData.ViewExternalCallResult
-          .fromProtoV32(externalCallResultProto(includeNodeId = false))
+          .fromProtoV32(externalCallResultProto(nodeId = None))
           .left
           .value shouldBe ProtoDeserializationError.FieldNotSet("node_id")
       }
 
       "reject an external call result without call_index" in {
         ViewParticipantData.ViewExternalCallResult
-          .fromProtoV32(externalCallResultProto(includeCallIndex = false))
+          .fromProtoV32(externalCallResultProto(callIndex = None))
           .left
           .value shouldBe ProtoDeserializationError.FieldNotSet("call_index")
       }
 
       "reject an external call result with negative node_id" in {
         ViewParticipantData.ViewExternalCallResult
-          .fromProtoV32(externalCallResultProto(nodeId = -1))
+          .fromProtoV32(externalCallResultProto(nodeId = Some(-1)))
           .left
           .value shouldBe ProtoDeserializationError.OtherError("Negative external call node_id: -1")
       }
@@ -560,7 +553,7 @@ class TransactionViewTest
           ProtoDeserializationError.OtherError("Negative external call call_index: -1")
 
         ViewParticipantData.ViewExternalCallResult
-          .fromProtoV32(externalCallResultProto(callIndex = -1))
+          .fromProtoV32(externalCallResultProto(callIndex = Some(-1)))
           .left
           .value shouldBe expected
       }
