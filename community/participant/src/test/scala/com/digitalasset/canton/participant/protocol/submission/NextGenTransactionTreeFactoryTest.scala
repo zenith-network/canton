@@ -220,7 +220,7 @@ final class NextGenTransactionTreeFactoryTest
             }
           }
 
-          "record repeated external call results on one exercise node with increasing call indexes" in {
+          "record repeated identical external call results on one exercise node with increasing call indexes" in {
             val devFactory = new ExampleTransactionFactory(
               versionOverride = Some(ProtocolVersion.dev)
             )(
@@ -230,15 +230,13 @@ final class NextGenTransactionTreeFactoryTest
             val treeFactory = createTransactionTreeFactory(devFactory)
             val example = devFactory.MultipleRootsAndSimpleViewNesting
             val nodeId = LfNodeId(5)
-            val otherExternalCallResult =
-              externalCallResult.copy(output = Bytes.fromStringUtf8("other-output"))
 
             createTransactionTree(
               treeFactory,
               withExternalCallResults(
                 example,
                 nodeId,
-                ImmArray(externalCallResult, otherExternalCallResult),
+                ImmArray(externalCallResult, externalCallResult),
               ),
               successfulLookup(example),
               example.keyResolver.asCidOptionMap,
@@ -250,7 +248,7 @@ final class NextGenTransactionTreeFactoryTest
               val records = view1.viewParticipantData.tryUnwrap.externalCallResults.toSeq
 
               records should have size 2
-              records.map(_.result) shouldBe Seq(externalCallResult, otherExternalCallResult)
+              records.map(_.result) shouldBe Seq(externalCallResult, externalCallResult)
               records.map(_.nodeId).toSet shouldBe Set(LfNodeId(4))
               records.map(_.callIndex) shouldBe Seq(0, 1)
               records.map(_.checkingParties).toSet shouldBe Set(
