@@ -692,7 +692,7 @@ object ViewParticipantData
         output = result.output.toByteString,
         nodeId = Some(nodeId.index),
         callIndex = Some(callIndex),
-        checkingParties = checkingParties.toSeq,
+        checkingParties = checkingParties.toSeq.sorted,
       )
   }
 

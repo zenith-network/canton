@@ -25,6 +25,8 @@ import com.digitalasset.daml.lf.transaction.ExternalCallResult
 import com.google.protobuf.{ByteString as ProtoByteString, CodedOutputStream}
 import org.scalatest.wordspec.AnyWordSpec
 
+import scala.collection.immutable.ListSet
+
 class TransactionViewTest
     extends AnyWordSpec
     with BaseTest
@@ -445,6 +447,39 @@ class TransactionViewTest
             vpd.getCryptographicEvidence
           )
           .map(_.unwrap) shouldBe Right(Right(vpd))
+      }
+
+      "serialize external call checking parties canonically" in {
+        val vpd = create(
+          actionDescription = exerciseActionDescription,
+          coreInputs = exerciseCoreInputs,
+          externalCallResults = ImmArray(
+            viewExternalCallResult(
+              nodeId = LfNodeId(7),
+              callIndex = 1,
+              checkingParties = ListSet(
+                ExampleTransactionFactory.submitter,
+                ExampleTransactionFactory.signatory,
+              ),
+            )
+          ),
+          protocolVersion = ProtocolVersion.dev,
+        ).value
+
+        val reorderedVpd = vpd.copy(
+          externalCallResults = ImmArray(
+            viewExternalCallResult(
+              nodeId = LfNodeId(7),
+              callIndex = 1,
+              checkingParties = ListSet(
+                ExampleTransactionFactory.signatory,
+                ExampleTransactionFactory.submitter,
+              ),
+            )
+          )
+        )
+
+        vpd.getCryptographicEvidence shouldBe reorderedVpd.getCryptographicEvidence
       }
 
       "reconstruct older view participant data with no external call results" in {
