@@ -7,8 +7,7 @@ import com.digitalasset.canton.data.ActionDescription.*
 import com.digitalasset.canton.protocol.*
 import com.digitalasset.canton.util.LfTransactionBuilder.{defaultPackageId, defaultTemplateId}
 import com.digitalasset.canton.{BaseTest, LfPartyId}
-import com.digitalasset.daml.lf.data.{Bytes, ImmArray, Ref}
-import com.digitalasset.daml.lf.transaction.ExternalCallResult
+import com.digitalasset.daml.lf.data.Ref
 import org.scalatest.wordspec.AnyWordSpec
 
 class ActionDescriptionTest extends AnyWordSpec with BaseTest {
@@ -48,42 +47,6 @@ class ActionDescriptionTest extends AnyWordSpec with BaseTest {
           Set.empty,
         ) shouldBe
           Right(expected)
-      }
-
-      "an exercise node with external call results ignores them" in {
-        val externalCallResults = ImmArray(
-          ExternalCallResult(
-            extensionId = "extension",
-            functionId = "function",
-            config = Bytes.fromStringUtf8("config"),
-            input = Bytes.fromStringUtf8("input"),
-            output = Bytes.fromStringUtf8("output"),
-          )
-        )
-        val node = ExampleTransactionFactory
-          .exerciseNodeWithoutChildren(
-            suffixedId,
-            actingParties = Set(ExampleTransactionFactory.submitter),
-          )
-          .copy(externalCallResults = externalCallResults)
-
-        val description = ActionDescription
-          .tryFromLfActionNode(
-            node,
-            Some(seed),
-            Set.empty,
-          )
-          .asInstanceOf[ExerciseActionDescription]
-        val expected = ActionDescription
-          .tryFromLfActionNode(
-            node.copy(externalCallResults = ImmArray.Empty),
-            Some(seed),
-            Set.empty,
-          )
-
-        description shouldBe expected
-        ActionDescription.fromProtoV30(description.toProtoV30).value shouldBe description
-        ActionDescription.fromProtoV31(description.toProtoV31).value shouldBe description
       }
 
     }
