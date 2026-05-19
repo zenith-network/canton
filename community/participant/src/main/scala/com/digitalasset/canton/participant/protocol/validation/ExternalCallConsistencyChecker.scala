@@ -81,14 +81,7 @@ object ExternalCallConsistencyChecker {
   private def bytesSize(bytes: Bytes): Int = bytes.toByteString.size()
 }
 
-private[validation] trait ExternalCallConsistencyChecking {
-  def check(
-      viewValidationResults: Map[ViewPosition, ViewValidationResult],
-      hostedConfirmingParties: Set[LfPartyId],
-  ): ExternalCallConsistencyChecker.Result
-}
-
-final class ExternalCallConsistencyChecker extends ExternalCallConsistencyChecking {
+final class ExternalCallConsistencyChecker {
   import ExternalCallConsistencyChecker.*
 
   def check(

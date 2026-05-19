@@ -25,14 +25,13 @@ class TransactionConfirmationResponsesFactory(
     participantId: ParticipantId,
     synchronizerId: PhysicalSynchronizerId,
     protected val loggerFactory: NamedLoggerFactory,
-    externalCallConsistencyChecker: ExternalCallConsistencyChecking =
-      new ExternalCallConsistencyChecker(),
 ) extends NamedLogging {
 
   import com.digitalasset.canton.util.ShowUtil.*
 
   private val protocolVersion = synchronizerId.protocolVersion
   private val maxExternalCallDisagreementDetailsLength = 1024
+  private val externalCallConsistencyChecker = new ExternalCallConsistencyChecker()
 
   /** Takes a `transactionValidationResult` and computes the
     * [[protocol.messages.ConfirmationResponses]], to be sent to the mediator.

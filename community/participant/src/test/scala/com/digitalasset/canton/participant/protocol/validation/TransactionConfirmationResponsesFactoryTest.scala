@@ -41,15 +41,12 @@ final class TransactionConfirmationResponsesFactoryTest
     responseFactory(ProtocolVersion.dev)
 
   private def responseFactory(
-      protocolVersion: ProtocolVersion,
-      externalCallConsistencyChecker: ExternalCallConsistencyChecking =
-        new ExternalCallConsistencyChecker(),
+      protocolVersion: ProtocolVersion
   ): TransactionConfirmationResponsesFactory =
     new TransactionConfirmationResponsesFactory(
       submittingParticipant,
       factory.psid.copy(protocolVersion = protocolVersion),
       loggerFactory,
-      externalCallConsistencyChecker,
     )
 
   private val leftViewPosition = ViewPosition.root
@@ -211,118 +208,7 @@ final class TransactionConfirmationResponsesFactoryTest
     )
   }
 
-  private def externalCallConsistencyCheckerReturningEmpty: ExternalCallConsistencyChecking = {
-    val checker = mock[ExternalCallConsistencyChecking]
-    when(
-      checker.check(
-        any[Map[ViewPosition, ViewValidationResult]],
-        any[Set[LfPartyId]],
-      )
-    ).thenReturn(ExternalCallConsistencyChecker.Result.empty)
-    checker
-  }
-
   "TransactionConfirmationResponsesFactory" should {
-    "not invoke external-call consistency checking for non-dev protocol versions" in {
-      val checker = externalCallConsistencyCheckerReturningEmpty
-      val stableFactory =
-        new ExampleTransactionFactory(versionOverride = Some(ProtocolVersion.v35))()
-      val example = stableFactory.MultipleRoots
-
-      createResponses(
-        transactionValidationResult(
-          Map(
-            leftViewPosition -> validationResult(
-              withConfirmers(example.rootViews(4), Set(submitter))
-            )
-          )
-        ),
-        responseFactory(ProtocolVersion.v35, checker),
-      )
-
-      verify(checker, never).check(
-        any[Map[ViewPosition, ViewValidationResult]],
-        any[Set[LfPartyId]],
-      )
-    }
-
-    "not invoke external-call consistency checking for dev transactions without external calls" in {
-      val checker = externalCallConsistencyCheckerReturningEmpty
-      val example = factory.MultipleRoots
-
-      createResponses(
-        transactionValidationResult(
-          Map(
-            leftViewPosition -> validationResult(
-              withConfirmers(example.rootViews(4), Set(submitter))
-            )
-          )
-        ),
-        responseFactory(ProtocolVersion.dev, checker),
-      )
-
-      verify(checker, never).check(
-        any[Map[ViewPosition, ViewValidationResult]],
-        any[Set[LfPartyId]],
-      )
-    }
-
-    "invoke external-call consistency checking once when dev external calls can affect responses" in {
-      val checker = externalCallConsistencyCheckerReturningEmpty
-      val example = factory.MultipleRoots
-      val view = withExternalCallResults(
-        withConfirmers(example.rootViews(4), Set(submitter)),
-        ImmArray(
-          externalCallViewResult(
-            nodeId = LfNodeId(0),
-            result = externalCallResult,
-            checkingParties = Set(submitter),
-          )
-        ),
-      )
-
-      createResponses(
-        transactionValidationResult(Map(leftViewPosition -> validationResult(view))),
-        responseFactory(ProtocolVersion.dev, checker),
-      )
-
-      verify(checker, times(1)).check(
-        any[Map[ViewPosition, ViewValidationResult]],
-        any[Set[LfPartyId]],
-      )
-    }
-
-    "not invoke external-call consistency checking when malformed verdicts win" in {
-      val checker = externalCallConsistencyCheckerReturningEmpty
-      val example = factory.MultipleRoots
-      val view = withExternalCallResults(
-        withConfirmers(example.rootViews(4), Set(submitter)),
-        ImmArray(
-          externalCallViewResult(
-            nodeId = LfNodeId(0),
-            result = externalCallResult,
-            checkingParties = Set(submitter),
-          )
-        ),
-      )
-
-      loggerFactory.assertLogs(
-        createResponses(
-          transactionValidationResult(
-            Map(leftViewPosition -> validationResult(view)),
-            authorizationResult = Map(leftViewPosition -> "authorization failure"),
-          ),
-          responseFactory(ProtocolVersion.dev, checker),
-        ),
-        _.shouldBeCantonErrorCode(LocalRejectError.MalformedRejects.MalformedRequest),
-      )
-
-      verify(checker, never).check(
-        any[Map[ViewPosition, ViewValidationResult]],
-        any[Set[LfPartyId]],
-      )
-    }
-
     "split external-call disagreements from the general verdict by party" in {
       val responses =
         createResponses(transactionValidationResult(conflictingExternalCallViews))
