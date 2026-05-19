@@ -334,8 +334,7 @@ final case class TransactionView private (
     for {
       _ <- viewParticipantData.unwrap match {
         case Left(_) => Either.unit
-        case Right(d) =>
-          validateViewParticipantData(d, childParticipantData)
+        case Right(d) => validateViewParticipantData(d, childParticipantData)
       }
       _ <- viewCommonData.unwrap match {
         case Left(_) => Either.unit
