@@ -449,6 +449,46 @@ class TransactionViewTest
           .map(_.unwrap) shouldBe Right(Right(vpd))
       }
 
+      "reconstruct dev keyed external call results" in {
+        val key = ExampleTransactionFactory.globalKeyWithMaintainers()
+
+        val usedContract = ExampleContractFactory.build(
+          overrideContractId = Some(absoluteId),
+          keyOpt = Some(key.unversioned),
+        )
+        val vpd = create(
+          actionDescription = exerciseActionDescription,
+          consumed = Set(absoluteId),
+          createdIds = Seq(createdId),
+          coreInputs = Map(absoluteId -> usedContract),
+          archivedInSubviews = Set(otherAbsoluteId),
+          resolvedKeys = Map(
+            ExampleTransactionFactory.defaultGlobalKey ->
+              LfVersioned(
+                key.version,
+                KeyResolutionWithMaintainers(
+                  Vector(usedContract.contractId),
+                  key.unversioned.maintainers,
+                ),
+              )
+          ),
+          externalCallResults = ImmArray(
+            viewExternalCallResult(
+              nodeId = LfNodeId(7),
+              callIndex = 1,
+              checkingParties = externalCallCheckingParties,
+            )
+          ),
+          protocolVersion = ProtocolVersion.dev,
+        ).value
+
+        ViewParticipantData
+          .fromByteString(ProtocolVersion.dev, hashOps)(
+            vpd.getCryptographicEvidence
+          )
+          .map(_.unwrap) shouldBe Right(Right(vpd))
+      }
+
       "serialize external call checking parties canonically" in {
         val vpd = create(
           actionDescription = exerciseActionDescription,
