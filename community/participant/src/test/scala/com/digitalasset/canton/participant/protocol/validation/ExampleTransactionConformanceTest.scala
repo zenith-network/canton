@@ -479,7 +479,6 @@ class ExampleTransactionConformanceTest
         }
       }
 
-      ()
     }
   }
 }
