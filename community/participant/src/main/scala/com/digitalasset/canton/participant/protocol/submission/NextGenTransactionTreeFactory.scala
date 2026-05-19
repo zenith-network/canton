@@ -451,14 +451,13 @@ class NextGenTransactionTreeFactory(
       // that was created in the consequences of the exercise, i.e., we know the suffix only
       // after we have visited the create node.
       coreOtherNodes = coreOtherBuilder.result().map { case (nodeInfo, rbc) =>
-        val (nodeId, _) = nodeInfo
-        (nodeId, checked(trySuffixNode(state)(nodeInfo)), rbc)
+        (checked(trySuffixNode(state)(nodeInfo)), rbc)
       }
       externalCallResults = viewExternalCallResultsFromCollected()
       childViews = childViewsBuilder.result()
 
       suffixedRootNode: LfActionNode = coreOtherNodes.headOption
-        .map(_._2)
+        .map(_._1)
         .orElse(coreCreatedNodes.headOption)
         .getOrElse(
           throw new IllegalArgumentException(s"The received view has no core nodes. $view")
@@ -662,7 +661,7 @@ class NextGenTransactionTreeFactory(
 
   private def createViewParticipantData(
       coreCreatedNodes: List[LfNodeCreate],
-      coreOtherNodes: List[(LfNodeId, LfActionNode, RollbackScope)],
+      coreOtherNodes: List[(LfActionNode, RollbackScope)],
       childViews: Seq[TransactionView],
       createdContractInfo: collection.Map[LfContractId, NewContractInstance],
       resolvedKeys: Map[LfGlobalKey, LfVersioned[KeyResolutionWithMaintainers]],
@@ -674,7 +673,7 @@ class NextGenTransactionTreeFactory(
   ): EitherT[FutureUnlessShutdown, TransactionTreeConversionError, ViewParticipantData] = {
 
     val consumedInCore =
-      coreOtherNodes.flatMap { case (_, an, _) =>
+      coreOtherNodes.flatMap { case (an, _) =>
         LfTransactionUtil.consumedContractId(an)
       }.toSet
     val created = coreCreatedNodes.map { n =>
@@ -700,7 +699,7 @@ class NextGenTransactionTreeFactory(
     val createdInSameViewOrSubviews = createdInSubviews ++ created.map(_.contract.contractId)
 
     val coreInputs = coreOtherNodes.view
-      .flatMap { case (_, node, _) =>
+      .flatMap { case (node, _) =>
         LfTransactionUtil.usedContractId(node)
       }
       .filterNot(createdInSameViewOrSubviews.contains)
