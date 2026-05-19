@@ -3,7 +3,6 @@
 
 package com.digitalasset.canton.participant.protocol.validation
 
-import cats.Eval
 import cats.syntax.parallel.*
 import com.daml.nonempty.NonEmpty
 import com.digitalasset.canton.data.CantonTimestamp
@@ -30,8 +29,6 @@ class TransactionConfirmationResponsesFactory(
   import com.digitalasset.canton.util.ShowUtil.*
 
   private val protocolVersion = synchronizerId.protocolVersion
-  private val maxExternalCallDisagreementDetailsLength = 1024
-  private val externalCallConsistencyChecker = new ExternalCallConsistencyChecker()
 
   /** Takes a `transactionValidationResult` and computes the
     * [[protocol.messages.ConfirmationResponses]], to be sent to the mediator.
@@ -154,38 +151,13 @@ class TransactionConfirmationResponsesFactory(
             )
           )
 
-        viewsWithHostedParties <- transactionValidationResult.viewValidationResults.toSeq
-          .parTraverse { case (viewPosition, viewValidationResult) =>
+        responses <- transactionValidationResult.viewValidationResults.toSeq
+          .parTraverseFilter { case (viewPosition, viewValidationResult) =>
             for {
               hostedConfirmingParties <-
                 hostedConfirmingPartiesOfView(viewValidationResult)
 
-              hasHostedExternalCallResults =
-                protocolVersion.isDev &&
-                  hostedConfirmingParties.nonEmpty &&
-                  viewValidationResult.view.viewParticipantData.externalCallResults.nonEmpty
-            } yield (
-              viewPosition,
-              viewValidationResult,
-              hostedConfirmingParties,
-              hasHostedExternalCallResults,
-            )
-          }
-
-        hasHostedExternalCallResults = viewsWithHostedParties.exists(_._4)
-        externalCallConsistencyResult = Eval.later(
-          if (hasHostedExternalCallResults) {
-            val allHostedConfirmingParties = viewsWithHostedParties.flatMap(_._3).toSet
-            externalCallConsistencyChecker.check(
-              transactionValidationResult.viewValidationResults,
-              allHostedConfirmingParties,
-            )
-          } else ExternalCallConsistencyChecker.Result.empty
-        )
-
-        responses <- viewsWithHostedParties
-          .parTraverse { case (viewPosition, viewValidationResult, hostedConfirmingParties, _) =>
-            FutureUnlessShutdown.pure {
+            } yield {
 
               // Rejections due to a failed internal consistency check
               val internalConsistencyRejections =
@@ -282,73 +254,30 @@ class TransactionConfirmationResponsesFactory(
                   modelConformanceRejections ++ internalConsistencyRejections ++
                   replayRejections
 
-              def generalResponse(parties: Set[LfPartyId]): Option[ConfirmationResponse] =
-                Option.when(parties.nonEmpty) {
-                  val generalVerdict = localVerdicts
-                    .collectFirst { case localReject: LocalReject => localReject }
-                    .getOrElse(LocalApprove(protocolVersion))
-                  checked(
-                    ConfirmationResponse
-                      .tryCreate(
-                        Some(viewPosition),
-                        generalVerdict,
-                        parties,
-                      )
-                  )
+              val localVerdictAndPartiesO = localVerdicts
+                .collectFirst[(LocalVerdict, Set[LfPartyId])] {
+                  case malformed: LocalReject if malformed.isMalformed => malformed -> Set.empty
+                  case localReject: LocalReject if hostedConfirmingParties.nonEmpty =>
+                    localReject -> hostedConfirmingParties
                 }
-
-              localVerdicts.collectFirst {
-                case malformed: LocalReject if malformed.isMalformed =>
-                  checked(
-                    ConfirmationResponse
-                      .tryCreate(
-                        Some(viewPosition),
-                        malformed,
-                        Set.empty,
-                      )
+                .orElse(
+                  Option.when(hostedConfirmingParties.nonEmpty)(
+                    LocalApprove(protocolVersion) -> hostedConfirmingParties
                   )
-              } match {
-                case Some(malformedResponse) => Seq(malformedResponse)
-                case None if !hasHostedExternalCallResults =>
-                  generalResponse(hostedConfirmingParties).toList
-                case None =>
-                  val externalCallInconsistencies =
-                    externalCallConsistencyResult.value.inconsistencies.filter {
-                      case (party, inconsistency) =>
-                        hostedConfirmingParties(party) &&
-                        inconsistency.occurrences.exists(_.viewPosition == viewPosition)
-                    }
-                  val inconsistentParties = externalCallInconsistencies.keySet
+                )
 
-                  val externalCallResponses =
-                    externalCallInconsistencies.groupMap(_._2)(_._1).toSeq.map {
-                      case (inconsistency, parties) =>
-                        val reject = logged(
-                          requestId,
-                          LocalRejectError.ConsistencyRejections.ExternalCallResultDisagreement
-                            .Reject(
-                              inconsistency.description
-                                .limit(maxExternalCallDisagreementDetailsLength)
-                                .toString
-                            ),
-                        ).toLocalReject(protocolVersion)
-                        checked(
-                          ConfirmationResponse
-                            .tryCreate(
-                              Some(viewPosition),
-                              reject,
-                              parties.toSet,
-                            )
-                        )
-                    }
-
-                  val generalParties = hostedConfirmingParties -- inconsistentParties
-
-                  externalCallResponses ++ generalResponse(generalParties).toList
+              localVerdictAndPartiesO.map { case (localVerdict, parties) =>
+                checked(
+                  ConfirmationResponse
+                    .tryCreate(
+                      Some(viewPosition),
+                      localVerdict,
+                      parties,
+                    )
+                )
               }
             }
           }
-          .map(_.flatten)
       } yield {
         checked(
           NonEmpty
