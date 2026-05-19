@@ -415,13 +415,17 @@ class NextGenTransactionTreeFactory(
                 val suffixedNode = trySuffixNode(state)(nodeId -> lfNode)
                 coreOtherBuilder += ((nodeId, lfNode) -> rbScope)
                 coreExternalCallResultsBuilderO.foreach { coreExternalCallResultsBuilder =>
-                  val submittingAdminPartyForNodeO =
-                    if (sourceRootNodeIds(nodeId)) submittingAdminPartyO else None
-                  coreExternalCallResultsBuilder ++= externalCallResultsFromCoreNode(
-                    nodeId,
-                    lfNode,
-                    submittingAdminPartyForNodeO,
-                  )
+                  lfNode match {
+                    case exercise: LfNodeExercises if exercise.externalCallResults.nonEmpty =>
+                      val submittingAdminPartyForNodeO =
+                        if (sourceRootNodeIds(nodeId)) submittingAdminPartyO else None
+                      coreExternalCallResultsBuilder ++= externalCallResultsFromCoreNode(
+                        nodeId,
+                        exercise,
+                        submittingAdminPartyForNodeO,
+                      )
+                    case _ => ()
+                  }
                 }
                 EitherT.pure[FutureUnlessShutdown, TransactionTreeConversionError](suffixedNode)
             }
@@ -935,20 +939,17 @@ object NextGenTransactionTreeFactory {
 
   private[submission] def externalCallResultsFromCoreNode(
       nodeId: LfNodeId,
-      node: LfActionNode,
+      exercise: LfNodeExercises,
       submittingAdminPartyO: Option[LfPartyId],
-  ): Seq[CoreExternalCallResult] =
-    node match {
-      case exercise: LfNodeExercises if exercise.externalCallResults.nonEmpty =>
-        val checkingParties =
-          submittingAdminPartyO.fold[Set[LfPartyId]](Set.empty)(Set(_)) |
-            LfTransactionUtil.signatoriesOrMaintainers(exercise) |
-            LfTransactionUtil.actingParties(exercise)
-        exercise.externalCallResults.toSeq.zipWithIndex.map { case (result, callIndex) =>
-          CoreExternalCallResult(nodeId, result, callIndex, checkingParties)
-        }
-      case _ => Seq.empty
+  ): Seq[CoreExternalCallResult] = {
+    val checkingParties =
+      submittingAdminPartyO.fold[Set[LfPartyId]](Set.empty)(Set(_)) |
+        LfTransactionUtil.signatoriesOrMaintainers(exercise) |
+        LfTransactionUtil.actingParties(exercise)
+    exercise.externalCallResults.toSeq.zipWithIndex.map { case (result, callIndex) =>
+      CoreExternalCallResult(nodeId, result, callIndex, checkingParties)
     }
+  }
 
   private[submission] def viewExternalCallResults(
       coreExternalCallResults: List[CoreExternalCallResult],
