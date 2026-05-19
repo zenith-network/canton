@@ -308,12 +308,22 @@ class NextGenTransactionTreeFactory(
 
     // contract IDs have not yet been suffixed
     val coreOtherBuilder = List.newBuilder[((LfNodeId, LfActionNode), RollbackScope)]
-    val coreExternalCallResultsBuilderO =
-      Option.when(
-        protocolVersion.isDev && sourceTransaction.version == LfSerializationVersion.VDev
-      )(
-        List.newBuilder[CoreExternalCallResult]
-      )
+    val collectExternalCallResults =
+      protocolVersion.isDev && sourceTransaction.version == LfSerializationVersion.VDev
+
+    @SuppressWarnings(Array("org.wartremover.warts.Var"))
+    var coreExternalCallResultsBuilderO =
+      Option.empty[mutable.Builder[CoreExternalCallResult, List[CoreExternalCallResult]]]
+
+    def coreExternalCallResultsBuilder()
+        : mutable.Builder[CoreExternalCallResult, List[CoreExternalCallResult]] =
+      coreExternalCallResultsBuilderO match {
+        case Some(builder) => builder
+        case None =>
+          val builder = List.newBuilder[CoreExternalCallResult]
+          coreExternalCallResultsBuilderO = Some(builder)
+          builder
+      }
 
     val childViewsBuilder = Seq.newBuilder[TransactionView]
 
@@ -414,19 +424,18 @@ class NextGenTransactionTreeFactory(
               case lfNode: LfActionNode =>
                 val suffixedNode = trySuffixNode(state)(nodeId -> lfNode)
                 coreOtherBuilder += ((nodeId, lfNode) -> rbScope)
-                coreExternalCallResultsBuilderO.foreach { coreExternalCallResultsBuilder =>
+                if (collectExternalCallResults)
                   lfNode match {
                     case exercise: LfNodeExercises if exercise.externalCallResults.nonEmpty =>
                       val submittingAdminPartyForNodeO =
                         if (sourceRootNodeIds(nodeId)) submittingAdminPartyO else None
-                      coreExternalCallResultsBuilder ++= externalCallResultsFromCoreNode(
+                      coreExternalCallResultsBuilder() ++= externalCallResultsFromCoreNode(
                         nodeId,
                         exercise,
                         submittingAdminPartyForNodeO,
                       )
                     case _ => ()
                   }
-                }
                 EitherT.pure[FutureUnlessShutdown, TransactionTreeConversionError](suffixedNode)
             }
 
