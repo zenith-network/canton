@@ -87,7 +87,7 @@ class ExampleTransactionConformanceTest
 
   val pureCrypto = new SymbolicPureCrypto()
 
-  CantonContractIdVersion.all.foreach { contractIdVersion =>
+  forAll(Table("contract ID version", CantonContractIdVersion.all*)) { contractIdVersion =>
     val factory: ExampleTransactionFactory = new ExampleTransactionFactory()(
       cantonContractIdVersion = contractIdVersion
     )
