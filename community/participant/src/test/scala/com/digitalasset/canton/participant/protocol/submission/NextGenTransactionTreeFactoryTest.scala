@@ -24,7 +24,7 @@ import com.digitalasset.canton.topology.store.{
   ResolvedPackagesAndDependencies,
 }
 import com.digitalasset.canton.tracing.TraceContext
-import com.digitalasset.canton.util.TestContractHasher
+import com.digitalasset.canton.util.{LfTransactionUtil, TestContractHasher}
 import com.digitalasset.canton.version.ProtocolVersion
 import com.digitalasset.daml.lf.CantonOnly
 import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
@@ -406,6 +406,62 @@ final class NextGenTransactionTreeFactoryTest
                     ExampleTransactionFactory.submitter,
                   )
                 }
+            }
+          }
+
+          "record by-key exercise external call checking parties from signatories and actors" in {
+            val devFactory = new ExampleTransactionFactory(
+              versionOverride = Some(ProtocolVersion.dev)
+            )(
+              psid = factory.psid.copy(protocolVersion = ProtocolVersion.dev),
+              cantonContractIdVersion = contractIdVersion,
+            )
+            val treeFactory = createTransactionTreeFactory(devFactory)
+            val example = devFactory.SingleExercise(devFactory.deriveNodeSeed(0))
+            val contractSignatory = ExampleTransactionFactory.submitter
+            val actor = ExampleTransactionFactory.signatory
+            val keyWithMaintainers = ExampleTransactionFactory
+              .globalKeyWithMaintainers(maintainers = Set(contractSignatory))
+              .unversioned
+            val transaction = withExternalCallResults(
+              example.versionedUnsuffixedTransaction,
+              example.metadata,
+              LfNodeId(0),
+              ImmArray(externalCallResult),
+              _.copy(
+                keyOpt = Some(keyWithMaintainers),
+                byKey = true,
+                actingParties = Set(actor),
+              ),
+            )
+            val exercise = transaction.unwrap.nodes(LfNodeId(0)).asInstanceOf[LfNodeExercises]
+            val contractWithKey = ExampleTransactionFactory.asContractInstance(
+              exercise.targetCoid,
+              metadata = LfTransactionUtil.metadataFromExercise(exercise),
+            )()
+            val contractOfId: ContractInstanceOfId = id =>
+              if (id == exercise.targetCoid)
+                EitherT.rightT[FutureUnlessShutdown, ContractLookupError](contractWithKey)
+              else successfulLookup(example)(id)
+
+            createTransactionTree(
+              treeFactory,
+              transaction,
+              contractOfId,
+              Map(keyWithMaintainers.globalKey -> Some(exercise.targetCoid)),
+              snapshot = devFactory.topologySnapshot,
+              exampleFactory = devFactory,
+            ).value.map { result =>
+              val tree = result.value
+              val view = tree.rootViews.unblindedElements.loneElement
+              val record =
+                view.viewParticipantData.tryUnwrap.externalCallResults.toSeq.loneElement
+
+              record.checkingParties shouldBe Set(
+                ExampleTransactionFactory.submittingParticipant.adminParty.toLf,
+                contractSignatory,
+                actor,
+              )
             }
           }
 
