@@ -7,10 +7,11 @@ import com.daml.ledger.api.v2.interactive.transaction.v1.interactive_submission_
 import com.digitalasset.canton.logging.LoggingContextWithTrace
 import com.digitalasset.canton.platform.apiserver.services.command.interactive.codec.PreparedTransactionCodec.*
 import com.digitalasset.canton.platform.apiserver.services.command.interactive.codec.{
+  PrepareTransactionData,
   PreparedTransactionDecoder,
   PreparedTransactionEncoder,
 }
-import com.digitalasset.canton.topology.GeneratorsTopology
+import com.digitalasset.canton.topology.{GeneratorsTopology, PhysicalSynchronizerId, SynchronizerId}
 import com.digitalasset.canton.{BaseTest, GeneratorsLf, HasExecutionContext}
 import com.digitalasset.daml.lf.crypto.Hash
 import com.digitalasset.daml.lf.data.ImmArray
@@ -130,6 +131,25 @@ class PreparedTransactionCodecV1Spec
         }
 
         timeouts.default.await_("Round trip")(result)
+      }
+    }
+
+    "serialize a logical synchronizer id in metadata prepared with a physical synchronizer id" in {
+      import generatorsTopology.*
+
+      forAll { (prepareTransactionData: PrepareTransactionData, psid: PhysicalSynchronizerId) =>
+        val result = for {
+          encoded <- encoder.encode(prepareTransactionData.copy(synchronizer = psid))
+        } yield {
+          val encodedSynchronizerId = encoded.metadata.value.synchronizerId
+
+          encodedSynchronizerId shouldEqual psid.logical.toProtoPrimitive
+          SynchronizerId
+            .fromProtoPrimitive(encodedSynchronizerId, "synchronizer_id")
+            .value shouldEqual psid.logical
+        }
+
+        timeouts.default.await_("Encode metadata with logical synchronizer id")(result)
       }
     }
   }
