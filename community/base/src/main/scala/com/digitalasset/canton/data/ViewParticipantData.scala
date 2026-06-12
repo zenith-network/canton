@@ -100,6 +100,12 @@ final case class ViewParticipantData private (
 ) extends MerkleTreeLeaf[ViewParticipantData](hashOps)
     with HasProtocolVersionedWrapper[ViewParticipantData]
     with ProtocolVersionedMemoizedEvidence {
+
+  def supportsExternalCallResults: Boolean =
+    representativeProtocolVersion >= ViewParticipantData.protocolVersionRepresentativeFor(
+      ProtocolVersion.dev
+    )
+
   {
     def requireDistinct[A](vals: Seq[A])(message: A => String): Unit = {
       val set = scala.collection.mutable.Set[A]()
@@ -136,10 +142,7 @@ final case class ViewParticipantData private (
       )
 
     if (externalCallResults.isEmpty) ()
-    else if (
-      representativeProtocolVersion <
-        ViewParticipantData.protocolVersionRepresentativeFor(ProtocolVersion.dev)
-    )
+    else if (!supportsExternalCallResults)
       throw InvalidViewParticipantData(
         s"External call results are supported only from protocol version ${ProtocolVersion.dev} onwards"
       )
