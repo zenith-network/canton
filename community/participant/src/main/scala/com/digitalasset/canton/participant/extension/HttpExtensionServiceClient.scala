@@ -15,9 +15,10 @@ import com.digitalasset.canton.participant.config.{
   ExtensionServiceAuthConfig,
   ExtensionServiceConfig,
 }
+import com.digitalasset.canton.platform.execution.ExternalCallMode
 import com.digitalasset.canton.tracing.TraceContext
-import com.digitalasset.canton.util.{DelayUtil, FutureUtil}
 import com.digitalasset.canton.util.retry.{Backoff, NoExceptionRetryPolicy, Success}
+import com.digitalasset.canton.util.{DelayUtil, FutureUtil}
 
 import java.io.ByteArrayOutputStream
 import java.net.URI
@@ -32,8 +33,8 @@ import java.util.{List as JList, UUID}
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.jdk.CollectionConverters.*
 import scala.jdk.javaapi.FutureConverters
-import scala.util.control.NonFatal
 import scala.util.Try
+import scala.util.control.NonFatal
 
 /** HTTP client implementation for extension services with retry logic, bearer token authentication,
   * and TLS support.
@@ -277,7 +278,7 @@ class HttpExtensionServiceClient(
             .header("Accept", "text/plain")
             .header("X-Daml-External-Function-Id", functionId)
             .header("X-Daml-External-Config-Hash", configHash)
-            .header("X-Daml-External-Mode", mode.headerValue)
+            .header("X-Daml-External-Mode", mode.wireValue)
             .header("X-Request-Id", requestId)
             .header("Idempotency-Key", idempotencyKey)
 
@@ -302,7 +303,7 @@ class HttpExtensionServiceClient(
                 .build()
 
               logger.debug(
-                s"Making external call to extension '$extensionId': functionId=$functionId, mode=${mode.headerValue}, requestId=$requestId"
+                s"Making external call to extension '$extensionId': functionId=$functionId, mode=${mode.wireValue}, requestId=$requestId"
               )
 
               performUnlessClosing

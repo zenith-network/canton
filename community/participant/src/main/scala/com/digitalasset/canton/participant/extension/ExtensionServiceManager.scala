@@ -8,11 +8,12 @@ import com.digitalasset.canton.http.HttpService
 import com.digitalasset.canton.lifecycle.{FlagCloseable, FutureUnlessShutdown}
 import com.digitalasset.canton.logging.{NamedLoggerFactory, NamedLogging}
 import com.digitalasset.canton.participant.config.ExtensionServiceConfig
+import com.digitalasset.canton.platform.execution.ExternalCallMode
 import com.digitalasset.canton.tracing.TraceContext
 
 import java.net.http.HttpClient
-import java.security.cert.CertificateFactory
 import java.security.KeyStore
+import java.security.cert.CertificateFactory
 import scala.concurrent.ExecutionContext
 import scala.jdk.CollectionConverters.*
 
