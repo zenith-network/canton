@@ -40,6 +40,7 @@ import com.digitalasset.canton.participant.admin.party.{
 import com.digitalasset.canton.participant.ledger.api.LedgerApiIndexer
 import com.digitalasset.canton.participant.metrics.ParticipantMetrics
 import com.digitalasset.canton.participant.protocol.reassignment.ReassignmentCoordination
+import com.digitalasset.canton.participant.protocol.validation.ExternalCallValidator
 import com.digitalasset.canton.participant.pruning.AcsCommitmentProcessor
 import com.digitalasset.canton.participant.store.*
 import com.digitalasset.canton.participant.store.SynchronizerConnectionConfigStore.UnknownAlias
@@ -64,7 +65,6 @@ import com.digitalasset.canton.participant.synchronizer.*
 import com.digitalasset.canton.participant.topology.*
 import com.digitalasset.canton.participant.topology.client.MissingKeysAlerter
 import com.digitalasset.canton.platform.apiserver.execution.CommandProgressTracker
-import com.digitalasset.canton.platform.execution.ExternalCallHandler
 import com.digitalasset.canton.protocol.StaticSynchronizerParameters
 import com.digitalasset.canton.resource.DbExceptionRetryPolicy
 import com.digitalasset.canton.sequencing.SequencerConnectionValidation
@@ -144,7 +144,7 @@ private[sync] class SynchronizerConnectionsManager(
     testingConfig: TestingConfigInternal,
     ledgerApiIndexer: LifeCycleContainer[LedgerApiIndexer],
     connectedSynchronizersLookupContainer: ConnectedSynchronizersLookupContainer,
-    externalCallHandler: ExternalCallHandler,
+    externalCallValidator: ExternalCallValidator,
 )(implicit ec: ExecutionContextExecutor, mat: Materializer, val tracer: Tracer)
     extends FlagCloseable
     with Spanning
@@ -1207,7 +1207,7 @@ private[sync] class SynchronizerConnectionsManager(
               futureSupervisor,
               synchronizerLoggerFactory,
               testingConfig,
-              externalCallHandler,
+              externalCallValidator,
             )
           )
 

@@ -76,6 +76,7 @@ import com.digitalasset.canton.participant.protocol.submission.routing.{
   RoutingSynchronizerStateFactory,
   TransactionRoutingProcessor,
 }
+import com.digitalasset.canton.participant.protocol.validation.ExternalCallValidator
 import com.digitalasset.canton.participant.pruning.PruningProcessor
 import com.digitalasset.canton.participant.replica.ParticipantReplicaManager
 import com.digitalasset.canton.participant.store.*
@@ -96,7 +97,6 @@ import com.digitalasset.canton.participant.synchronizer.*
 import com.digitalasset.canton.participant.topology.*
 import com.digitalasset.canton.platform.apiserver.execution.CommandProgressTracker
 import com.digitalasset.canton.platform.apiserver.services.command.interactive.CostEstimationHints
-import com.digitalasset.canton.platform.execution.ExternalCallHandler
 import com.digitalasset.canton.protocol.*
 import com.digitalasset.canton.protocol.WellFormedTransaction.WithoutSuffixes
 import com.digitalasset.canton.replica.ReplicaState
@@ -177,7 +177,7 @@ class CantonSyncService(
     testingConfig: TestingConfigInternal,
     val ledgerApiIndexer: LifeCycleContainer[LedgerApiIndexer],
     connectedSynchronizersLookupContainer: ConnectedSynchronizersLookupContainer,
-    externalCallHandler: ExternalCallHandler,
+    externalCallValidator: ExternalCallValidator,
 )(implicit ec: ExecutionContextExecutor, mat: Materializer, val tracer: Tracer)
     extends state.SyncService
     with ParticipantPruningSyncService
@@ -231,7 +231,7 @@ class CantonSyncService(
     testingConfig,
     ledgerApiIndexer,
     connectedSynchronizersLookupContainer,
-    externalCallHandler,
+    externalCallValidator,
   )
 
   private def connectedSynchronizersLookup: ConnectedSynchronizersLookup =
@@ -1882,7 +1882,7 @@ object CantonSyncService {
       ledgerApiIndexer: LifeCycleContainer[LedgerApiIndexer],
       connectedSynchronizersLookupContainer: ConnectedSynchronizersLookupContainer,
       triggerDeclarativeChange: () => Unit,
-      externalCallHandler: ExternalCallHandler,
+      externalCallValidator: ExternalCallValidator,
   )(implicit ec: ExecutionContextExecutor, mat: Materializer, tracer: Tracer): CantonSyncService = {
 
     // Set initial replica state
@@ -1919,7 +1919,7 @@ object CantonSyncService {
         testingConfig,
         ledgerApiIndexer,
         connectedSynchronizersLookupContainer,
-        externalCallHandler,
+        externalCallValidator,
       )
     syncService
   }
