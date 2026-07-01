@@ -21,7 +21,7 @@ import com.digitalasset.canton.util.ReassignmentTag.{Source, Target}
 import com.digitalasset.canton.util.collection.SeqUtil
 import com.digitalasset.canton.version.ProtocolVersion
 import com.digitalasset.canton.{GeneratorsLf, LfInterfaceId, LfPackageId, LfPartyId, LfVersioned}
-import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
+import com.digitalasset.daml.lf.data.Bytes
 import com.digitalasset.daml.lf.transaction.{CreationTime, ExternalCallResult}
 import com.digitalasset.daml.lf.value.Value.ValueInt64
 import magnolify.scalacheck.auto.*
@@ -240,7 +240,7 @@ final class GeneratorsData(
 
   private def viewExternalCallResultsGenFor(
       actionDescription: ActionDescription
-  ): Gen[ImmArray[ViewParticipantData.ViewExternalCallResult]] =
+  ): Gen[Seq[ViewParticipantData.ViewExternalCallResult]] =
     actionDescription match {
       case _: ExerciseActionDescription if protocolVersion >= ProtocolVersion.dev =>
         boundedListGen {
@@ -264,18 +264,17 @@ final class GeneratorsData(
             checkingParties,
           )
         }.map(results =>
-          ImmArray.from(results.zipWithIndex.map {
-            case ((result, exerciseIndex, checkingParties), callIndex) =>
-              ViewParticipantData.ViewExternalCallResult(
-                result = result,
-                exerciseIndex = exerciseIndex,
-                callIndex = NonNegativeInt.tryCreate(callIndex),
-                checkingParties = checkingParties,
-              )
-          })
+          results.zipWithIndex.map { case ((result, exerciseIndex, checkingParties), callIndex) =>
+            ViewParticipantData.ViewExternalCallResult(
+              result = result,
+              exerciseIndex = exerciseIndex,
+              callIndex = NonNegativeInt.tryCreate(callIndex),
+              checkingParties = checkingParties,
+            )
+          }
         )
 
-      case _ => Gen.const(ImmArray.Empty)
+      case _ => Gen.const(Seq.empty)
     }
 
   implicit val viewParticipantDataArb: Arbitrary[ViewParticipantData] = Arbitrary(
@@ -391,7 +390,7 @@ final class GeneratorsData(
         // createdInSubviewArchivedInCore and notTransient should be disjoint
         .map(_ -- notTransient)
 
-      resolvedKeys <- actionDescription match {
+      keyResolution <- actionDescription match {
         case _: ExerciseActionDescription if protocolVersion >= ProtocolVersion.v35 =>
           val keyedInputs =
             coreInputs.map(c => (c.contract.contractKeyWithMaintainers, c)).collect {
@@ -422,16 +421,17 @@ final class GeneratorsData(
       externalCallResults <- viewExternalCallResultsGenFor(actionDescription)
 
       hashOps = TestHash // Not used for serialization
-    } yield ViewParticipantData.tryCreate(
+    } yield ViewParticipantData.tryCreate(hashOps)(
       coreInputs.map(contract => (contract.contractId, contract)).toMap,
       createdCore.toSeq,
       createdInSubviewArchivedInCore,
-      resolvedKeys,
+      keyResolution,
       actionDescription,
       rollbackContext,
       salt,
       externalCallResults,
-    )(hashOps, protocolVersion, None)
+      protocolVersion,
+    )
   )
 
   // If this pattern match is not exhaustive anymore, update the generator below

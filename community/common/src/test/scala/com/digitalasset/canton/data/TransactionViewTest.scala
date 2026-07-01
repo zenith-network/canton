@@ -20,7 +20,7 @@ import com.digitalasset.canton.{
   ProtoDeserializationError,
   ProtocolVersionChecksAnyWordSpec,
 }
-import com.digitalasset.daml.lf.data.{Bytes, ImmArray}
+import com.digitalasset.daml.lf.data.Bytes
 import com.digitalasset.daml.lf.transaction.ExternalCallResult
 import com.digitalasset.daml.lf.value.Value.VersionedValue
 import org.scalatest.wordspec.AnyWordSpec
@@ -220,7 +220,7 @@ class TransactionViewTest
 
     }
 
-    "has resolved keys" must {
+    s"has resolved keys with PV$testedProtocolVersion" must {
 
       def keyTest(
           parentCoreInput: Option[GenContractInstance] = None,
@@ -297,7 +297,7 @@ class TransactionViewTest
       }
 
       // Will be enabled from ProtocolVersion.v36
-      if (testedProtocolVersion > ProtocolVersion.v36) {
+      if (testedProtocolVersion >= ProtocolVersion.v36) {
 
         "allow the parent view to reference input contracts from this view or any subview - same key" in {
 
@@ -401,8 +401,8 @@ class TransactionViewTest
         coreInputs: Map[LfContractId, GenContractInstance] = Map.empty,
         createdIds: Seq[LfContractId] = Seq(createdId),
         archivedInSubviews: Set[LfContractId] = Set.empty,
-        resolvedKeys: Map[LfGlobalKey, LfVersioned[KeyResolutionWithMaintainers]] = Map.empty,
-        externalCallResults: ImmArray[ViewParticipantData.ViewExternalCallResult] = ImmArray.Empty,
+        keyResolution: Map[LfGlobalKey, LfVersioned[KeyResolutionWithMaintainers]] = Map.empty,
+        externalCallResults: Seq[ViewParticipantData.ViewExternalCallResult] = Seq.empty,
     ): Either[String, ViewParticipantData] = {
 
       val created = createdIds.map { id =>
@@ -418,12 +418,12 @@ class TransactionViewTest
           coreInputs2,
           created,
           archivedInSubviews,
-          resolvedKeys,
+          keyResolution,
           actionDescription,
           RollbackContextFactory(testedProtocolVersion).empty,
           salt,
-          testedProtocolVersion,
           externalCallResults,
+          testedProtocolVersion,
         )
         .flatMap { data =>
           // Return error message if root action is not valid
@@ -437,6 +437,21 @@ class TransactionViewTest
       "reject creation" in {
         create(createdIds = Seq(createdId, createdId)).left.value should
           startWith regex "createdCore contains the contract id .* multiple times at indices 0, 1"
+      }
+    }
+    "a structural invariant is violated via the test-only Optics" must {
+      // Optics/copy deliberately bypass the invariant checks, so
+      // an invalid instance can be constructed without throwing and is rejected only by `validated`.
+      "construct without throwing yet be rejected by validated" in {
+        val valid = create().value
+        val cid = valid.createdCore.loneElement.contract.contractId
+        val invalid =
+          ViewParticipantData.Optics.createdCoreUnsafe.modify(created => created ++ created)(valid)
+        invalid.createdCore should have size 2
+        invalid
+          .validated(testedProtocolVersion)
+          .left
+          .value shouldBe s"createdCore contains the contract id $cid multiple times at indices 0, 1"
       }
     }
     "a used contract has an inconsistent id" must {
@@ -520,7 +535,7 @@ class TransactionViewTest
         create(
           actionDescription = exerciseActionDescription,
           coreInputs = exerciseCoreInputs,
-          externalCallResults = ImmArray(
+          externalCallResults = Seq(
             viewExternalCallResult(exerciseIndex = 7, callIndex = 1),
             viewExternalCallResult(
               exerciseIndex = 7,
@@ -536,7 +551,7 @@ class TransactionViewTest
     "external call results on a non-exercise root action" must {
       "reject creation" onlyRunWithOrGreaterThan ProtocolVersion.dev in {
         create(
-          externalCallResults = ImmArray(viewExternalCallResult(exerciseIndex = 7))
+          externalCallResults = Seq(viewExternalCallResult(exerciseIndex = 7))
         ).left.value shouldBe "External call results require an exercise root action"
       }
     }
@@ -546,7 +561,7 @@ class TransactionViewTest
         create(
           actionDescription = exerciseActionDescription,
           coreInputs = exerciseCoreInputs,
-          externalCallResults = ImmArray(viewExternalCallResult(exerciseIndex = 7)),
+          externalCallResults = Seq(viewExternalCallResult(exerciseIndex = 7)),
         ).left.value shouldBe
           s"External call results are supported only from protocol version ${ProtocolVersion.dev} onwards"
       }
@@ -586,7 +601,7 @@ class TransactionViewTest
           createdIds = Seq(createdId),
           coreInputs = Map(absoluteId -> usedContract),
           archivedInSubviews = Set(otherAbsoluteId),
-          resolvedKeys = Map(
+          keyResolution = Map(
             ExampleTransactionFactory.defaultGlobalKey ->
               LfVersioned(
                 key.version,
@@ -609,7 +624,7 @@ class TransactionViewTest
         val vpd = create(
           actionDescription = exerciseActionDescription,
           coreInputs = exerciseCoreInputs,
-          externalCallResults = ImmArray(
+          externalCallResults = Seq(
             viewExternalCallResult(
               exerciseIndex = 7,
               callIndex = 1,
@@ -638,7 +653,7 @@ class TransactionViewTest
           createdIds = Seq(createdId),
           coreInputs = Map(absoluteId -> usedContract),
           archivedInSubviews = Set(otherAbsoluteId),
-          resolvedKeys = Map(
+          keyResolution = Map(
             ExampleTransactionFactory.defaultGlobalKey ->
               LfVersioned(
                 key.version,
@@ -648,7 +663,7 @@ class TransactionViewTest
                 ),
               )
           ),
-          externalCallResults = ImmArray(
+          externalCallResults = Seq(
             viewExternalCallResult(
               exerciseIndex = 7,
               callIndex = 1,
@@ -668,7 +683,7 @@ class TransactionViewTest
         val vpd = create(
           actionDescription = exerciseActionDescription,
           coreInputs = exerciseCoreInputs,
-          externalCallResults = ImmArray(
+          externalCallResults = Seq(
             viewExternalCallResult(
               exerciseIndex = 7,
               callIndex = 1,
@@ -681,7 +696,7 @@ class TransactionViewTest
         ).value
 
         val reorderedVpd = vpd.copy(
-          externalCallResults = ImmArray(
+          externalCallResults = Seq(
             viewExternalCallResult(
               exerciseIndex = 7,
               callIndex = 1,
