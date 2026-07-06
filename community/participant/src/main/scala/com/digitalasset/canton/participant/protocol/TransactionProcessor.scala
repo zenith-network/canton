@@ -41,6 +41,8 @@ import com.digitalasset.canton.participant.protocol.submission.{
 }
 import com.digitalasset.canton.participant.protocol.validation.{
   AuthorizationValidator,
+  ExternalCallResponseRouter,
+  ExternalCallValidator,
   InternalConsistencyChecker,
   ModelConformanceChecker,
   TransactionConfirmationResponsesFactory,
@@ -87,6 +89,7 @@ class TransactionProcessor(
     promiseFactory: PromiseUnlessShutdownFactory,
     participantNodeParameters: ParticipantNodeParameters,
     trafficEnforcementBackendO: Option[TrafficEnforcementBackend],
+    externalCallValidator: ExternalCallValidator,
 )(implicit val ec: ExecutionContext)
     extends ProtocolProcessor[
       TransactionProcessingSteps.SubmissionParam,
@@ -125,6 +128,12 @@ class TransactionProcessor(
         InternalConsistencyChecker(
           participantId,
           staticSynchronizerParameters.protocolVersion,
+          loggerFactory,
+        ),
+        new ExternalCallResponseRouter(
+          participantId,
+          externalCallValidator,
+          participantNodeParameters.general.batchingConfig.parallelism,
           loggerFactory,
         ),
         commandProgressTracker,

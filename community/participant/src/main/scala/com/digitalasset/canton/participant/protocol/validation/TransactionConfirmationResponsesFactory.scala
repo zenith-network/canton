@@ -4,7 +4,7 @@
 package com.digitalasset.canton.participant.protocol.validation
 
 import cats.syntax.parallel.*
-import com.digitalasset.canton.data.CantonTimestamp
+import com.digitalasset.canton.data.{CantonTimestamp, ViewPosition}
 import com.digitalasset.canton.error.TransactionError
 import com.digitalasset.canton.lifecycle.FutureUnlessShutdown
 import com.digitalasset.canton.logging.{NamedLoggerFactory, NamedLogging}
@@ -131,6 +131,114 @@ class TransactionConfirmationResponsesFactory(
       }
     }
 
+    // Converts the local verdict of a view into confirmation responses, splitting it by party
+    // where precomputed external-call outcomes (ExternalCallResponseRouter.Result) apply:
+    // hosted confirming parties that check a disagreeing external-call result reject the view
+    // with the disagreement, parties whose checked results could not be re-validated abstain (on
+    // views that would otherwise be approved), and the remaining parties respond with the view's
+    // own verdict. For a request without external calls, `externalCallResult` is empty and the
+    // view's verdict is returned unsplit.
+    def responsesForVerdict(
+        viewPosition: ViewPosition,
+        hostedConfirmingParties: Set[LfPartyId],
+        localVerdictAndPartiesO: Option[(LocalVerdict, Set[LfPartyId])],
+        externalCallResult: ExternalCallResponseRouter.Result,
+    ): Seq[ConfirmationResponse] =
+      localVerdictAndPartiesO match {
+        case None => Seq.empty
+
+        case Some((malformed: LocalReject, parties)) if malformed.isMalformed =>
+          // A malformed rejection covers the whole view, so no external-call verdicts are routed
+          // for it. `parties` is empty by construction of localVerdictAndPartiesO, meeting the
+          // ConfirmationResponse invariant for malformed verdicts, so tryCreate cannot throw.
+          Seq(checked(ConfirmationResponse.tryCreate(Some(viewPosition), malformed, parties)))
+
+        case Some((localVerdict, parties)) =>
+          // Parties that reject because they check disagreeing external-call results (recorded
+          // across views, or within the replay data of a reinterpretation).
+          val disagreementRejects =
+            externalCallResult.inconsistenciesForView(viewPosition, hostedConfirmingParties)
+
+          // Parties that reject because re-validating a recorded result produced a different
+          // output. Only relevant if the view would otherwise be approved. Disagreement
+          // rejections take precedence, so parties already rejecting above are excluded and at
+          // most one external-call rejection is emitted per party and view.
+          val validationRejects = localVerdict match {
+            case _: LocalApprove =>
+              externalCallResult.validationRoutes.rejectsForView(
+                viewPosition,
+                hostedConfirmingParties -- disagreementRejects.map(_._1).toSet,
+              )
+            case _ => Seq.empty
+          }
+
+          val externalCallRejects = disagreementRejects ++ validationRejects
+          val rejectedParties = externalCallRejects.map(_._1).toSet
+
+          // Parties that abstain because a recorded result they check could not be re-validated.
+          // Rejections take precedence, so rejecting parties are excluded.
+          val externalCallAbstains = localVerdict match {
+            case _: LocalApprove =>
+              externalCallResult.validationRoutes.abstainsForView(
+                viewPosition,
+                hostedConfirmingParties -- rejectedParties,
+              )
+            case _ => Seq.empty
+          }
+
+          val externalCallRejectResponses =
+            externalCallRejects
+              .groupMap(_._2)(_._1)
+              .toSeq
+              .sortBy(_._1)(ExternalCallConsistencyChecker.orderInconsistency)
+              .map { case (inconsistency, parties) =>
+                val reject = logged(
+                  requestId,
+                  LocalRejectError.ConsistencyRejections.ExternalCallResultDisagreement
+                    .Reject(inconsistency.description),
+                ).toLocalReject(protocolVersion)
+                // The parties of a groupMap group are nonEmpty, meeting the
+                // ConfirmationResponse invariant for non-malformed verdicts.
+                checked(ConfirmationResponse.tryCreate(Some(viewPosition), reject, parties.toSet))
+              }
+
+          val externalCallAbstainResponses =
+            externalCallAbstains
+              .groupMap(_._2)(_._1)
+              .toSeq
+              .sortBy { case (reason, _) => reason }
+              .map { case (reason, parties) =>
+                // The parties of a groupMap group are nonEmpty, meeting the
+                // ConfirmationResponse invariant for non-malformed verdicts.
+                checked(
+                  ConfirmationResponse.tryCreate(
+                    Some(viewPosition),
+                    logged(
+                      requestId,
+                      LocalAbstainError.CannotPerformAllValidations.Abstain(reason),
+                    ).toLocalAbstain(protocolVersion),
+                    parties.toSet,
+                  )
+                )
+              }
+
+          val abstainedParties = externalCallAbstains.map(_._1).toSet
+          val remainingParties = parties -- rejectedParties -- abstainedParties
+
+          externalCallRejectResponses ++
+            externalCallAbstainResponses ++
+            Option
+              .when(remainingParties.nonEmpty)(
+                // remainingParties is guarded nonEmpty, meeting the ConfirmationResponse
+                // invariant for non-malformed verdicts.
+                checked(
+                  ConfirmationResponse
+                    .tryCreate(Some(viewPosition), localVerdict, remainingParties)
+                )
+              )
+              .toList
+      }
+
     def responsesForWellFormedPayloads(
         transactionValidationResult: TransactionValidationResult
     ): FutureUnlessShutdown[Option[ConfirmationResponses]] = {
@@ -139,20 +247,32 @@ class TransactionConfirmationResponsesFactory(
 
         internalConsistencyResultE <- transactionValidationResult.internalConsistencyResultET.value
 
+        externalCallResult <- transactionValidationResult.externalCallValidationResultF
+
         // Rejections due to a failed model conformance check
         // Aborts are logged by the Engine callback when the abort happens
         modelConformanceRejections =
           modelConformanceResultE.swap.toSeq.flatMap(error =>
-            error.nonAbortErrors.map(cause =>
-              logged(
-                requestId,
-                LocalRejectError.MalformedRejects.ModelConformance.Reject(cause.toString),
-              ).toLocalReject(protocolVersion)
+            error.nonAbortErrors.flatMap(cause =>
+              // An external-call replay disagreement that is routed to a hosted checking party is
+              // not turned into (nor logged as) a malformed model-conformance rejection of the
+              // whole view: the routed parties instead reject the affected views with a dedicated,
+              // equally logged ExternalCallResultDisagreement rejection (see responsesForVerdict).
+              // A routed error is never silent: its visible-disagreement alarm has fired in the
+              // external-call check, and each affected view logs its rejection when emitting it --
+              // unless the view is rejected as malformed for another reason, in which case that
+              // stronger rejection wins the view (the alarm remains on record).
+              Option.unless(externalCallResult.isRoutableModelConformanceError(cause))(
+                logged(
+                  requestId,
+                  LocalRejectError.MalformedRejects.ModelConformance.Reject(cause.toString),
+                ).toLocalReject(protocolVersion)
+              )
             )
           )
 
         responses <- transactionValidationResult.viewValidationResults.toSeq
-          .parTraverseFilter { case (viewPosition, viewValidationResult) =>
+          .parFlatTraverse { case (viewPosition, viewValidationResult) =>
             for {
               hostedConfirmingParties <-
                 hostedConfirmingPartiesOfView(viewValidationResult)
@@ -266,16 +386,12 @@ class TransactionConfirmationResponsesFactory(
                   )
                 )
 
-              localVerdictAndPartiesO.map { case (localVerdict, parties) =>
-                checked(
-                  ConfirmationResponse
-                    .tryCreate(
-                      Some(viewPosition),
-                      localVerdict,
-                      parties,
-                    )
-                )
-              }
+              responsesForVerdict(
+                viewPosition,
+                hostedConfirmingParties,
+                localVerdictAndPartiesO,
+                externalCallResult,
+              )
             }
           }
       } yield {

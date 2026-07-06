@@ -94,7 +94,13 @@ import com.digitalasset.canton.topology.client.TopologySnapshot
 import com.digitalasset.canton.topology.{ParticipantId, PhysicalSynchronizerId}
 import com.digitalasset.canton.tracing.TraceContext
 import com.digitalasset.canton.util.ShowUtil.*
-import com.digitalasset.canton.util.{EitherTUtil, ErrorUtil, LoggerUtil, RoseTree}
+import com.digitalasset.canton.util.{
+  EitherTUtil,
+  ErrorUtil,
+  FutureUnlessShutdownUtil,
+  LoggerUtil,
+  RoseTree,
+}
 import com.digitalasset.canton.version.ProtocolVersion
 import com.digitalasset.canton.{
   LedgerSubmissionId,
@@ -131,6 +137,7 @@ class TransactionProcessingSteps(
     createNodeEnricher: ContractEnricher,
     authorizationValidator: AuthorizationValidator,
     internalConsistencyChecker: InternalConsistencyChecker,
+    externalCallResponseRouter: ExternalCallResponseRouter,
     tracker: CommandProgressTracker,
     protected val loggerFactory: NamedLoggerFactory,
     futureSupervisor: FutureSupervisor,
@@ -898,12 +905,47 @@ class TransactionProcessingSteps(
             }
         )
 
+        // The external-call check re-validates recorded external-call results against the
+        // extension service. Like the model conformance check, it is kicked off here and only
+        // awaited when the confirmation responses are created, so that its network I/O runs
+        // concurrently with the remaining checks (in particular the reinterpretation, whose
+        // errors it consumes to route replay disagreements).
+        externalCallValidationResultF = {
+          val participantViews = parsedRequest.rootViewTrees.forgetNE
+            .flatMap(viewTree => viewTree.view.allSubviewsWithPosition(viewTree.viewPosition))
+            .map { case (view, viewPosition) =>
+              // The represented view of each root view tree is fully unblinded
+              // (FullTransactionViewTree invariant), so tryCreate cannot throw for it or any of
+              // its subviews (computeValidationResult below relies on the same invariant).
+              viewPosition -> checked(ParticipantTransactionView.tryCreate(view))
+            }
+            .toMap
+          val checkResultF = externalCallResponseRouter.check(
+            requestId,
+            participantViews,
+            ipsSnapshot,
+            conformanceResultET.value.map(_.swap.toSeq.flatMap(_.nonAbortErrors)),
+            runValidation = malformedPayloads.isEmpty,
+          )
+          if (malformedPayloads.nonEmpty) {
+            // Responses for malformed requests are constructed without awaiting the check
+            // (only its alarms matter there); drain it so that failures are logged rather
+            // than silently discarded.
+            FutureUnlessShutdownUtil.doNotAwaitUnlessShutdown(
+              checkResultF,
+              "external-call check failed for a request with malformed payloads",
+            )
+          }
+          checkResultF
+        }
+
       } yield ParallelChecksResult(
         authenticationResult,
         consistencyResultE,
         authorizationResult,
         conformanceResultET,
         internalConsistencyResultET,
+        externalCallValidationResultF,
         timeValidationE,
         replayCheckResult,
       )
@@ -976,6 +1018,7 @@ class TransactionProcessingSteps(
         authorizationResult = parallelChecksResult.authorizationResult,
         modelConformanceResultET = parallelChecksResult.conformanceResultET,
         internalConsistencyResultET = parallelChecksResult.internalConsistencyResultET,
+        externalCallValidationResultF = parallelChecksResult.externalCallValidationResultF,
         consumedInputsOfHostedParties = usedAndCreated.contracts.consumedInputsOfHostedStakeholders,
         witnessed = usedAndCreated.contracts.witnessed,
         createdContracts = usedAndCreated.contracts.created,
@@ -1637,6 +1680,7 @@ object TransactionProcessingSteps {
         ErrorWithInternalConsistencyCheck,
         Unit,
       ],
+      externalCallValidationResultF: FutureUnlessShutdown[ExternalCallResponseRouter.Result],
       timeValidationResultE: Either[TimeCheckFailure, Unit],
       replayCheckResult: Option[String],
   ) {
